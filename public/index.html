@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Interactive Maidenhead grid map showing JS8CALL operator locations in real time" />
+  <title>JS8CALL Map</title>
+
+  <!--
+    Leaflet is served from /leaflet/ by the Node.js backend (node_modules/leaflet/dist).
+    This means the app works fully offline — no CDN required.
+  -->
+  <link rel="stylesheet" href="/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Top Bar ──────────────────────────────────────────────────────────── -->
+  <div id="topbar">
+    <span id="app-title">JS8CALL Map</span>
+    <span id="my-callsign-badge" style="display:none"></span>
+
+    <div id="controls">
+      <button id="btn-grid"          class="btn active" title="Toggle Maidenhead Grid Overlay"
+              aria-pressed="true">Grid</button>
+      <button id="btn-measure"       class="btn"
+              title="Click two points on the map to measure distance and bearing"
+              aria-pressed="false">Measure Distance</button>
+      <button id="btn-clear-measure" class="btn"        style="display:none"
+              title="Clear the measurement line and result"
+              aria-label="Clear distance measurement">&#10005; Clear Measure</button>
+    </div>
+
+    <div id="connection-status" class="disconnected" role="status" aria-live="polite">
+      &#9679; Disconnected
+    </div>
+  </div>
+
+  <!-- ── Content Area ────────────────────────────────────────────────────── -->
+  <div id="content-area">
+
+    <!-- Station list sidebar -->
+    <div id="sidebar" role="complementary" aria-label="Heard stations list">
+      <div id="sidebar-header">
+        <span>Stations &nbsp;<span id="station-count" aria-live="polite">0</span></span>
+        <button id="btn-collapse-sidebar" title="Collapse station list"
+                aria-label="Collapse station list" aria-expanded="true">&#9664;</button>
+      </div>
+      <div id="station-list" role="list"></div>
+    </div>
+
+    <!-- Expand handle shown when sidebar is collapsed -->
+    <button id="btn-expand-sidebar" style="display:none"
+            title="Show station list" aria-label="Expand station list"
+            aria-expanded="false">&#9654;</button>
+
+    <!-- Leaflet map -->
+    <div id="map" role="application" aria-label="Maidenhead grid map"></div>
+
+    <!-- Measure mode instruction banner -->
+    <div id="measure-hint" class="hidden" role="status" aria-live="polite"></div>
+
+    <!-- Station detail panel (appears on station click) -->
+    <div id="detail-panel" class="hidden" role="region" aria-label="Station details">
+      <button id="detail-close" title="Close station details"
+              aria-label="Close station details">&#10005;</button>
+      <div id="detail-content"></div>
+    </div>
+
+    <!-- Distance measurement result banner -->
+    <div id="measure-result" class="hidden" role="status" aria-live="polite"></div>
+
+  </div>
+
+  <script src="/leaflet/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

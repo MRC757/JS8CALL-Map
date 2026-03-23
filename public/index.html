@@ -20,9 +20,20 @@
     <span id="app-title">JS8CALL Map</span>
     <span id="my-callsign-badge" style="display:none"></span>
 
+    <select id="theme-select" title="Colour theme" aria-label="Colour theme">
+      <option value="dark">Dark</option>
+      <option value="midnight">Midnight</option>
+      <option value="green">Terminal</option>
+      <option value="light">Light</option>
+      <option value="slate">Slate</option>
+    </select>
+
     <div id="controls">
       <button id="btn-grid"          class="btn active" title="Toggle Maidenhead Grid Overlay"
               aria-pressed="true">Grid</button>
+      <button id="btn-night"         class="btn"
+              title="Toggle day/night overlay — shows the solar terminator for HF propagation"
+              aria-pressed="false">Night</button>
       <button id="btn-measure"       class="btn"
               title="Click two points on the map to measure distance and bearing"
               aria-pressed="false">Measure Distance</button>
@@ -73,6 +84,7 @@
   </div>
 
   <script src="/leaflet/leaflet.js"></script>
+  <script src="/topojson/topojson-client.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

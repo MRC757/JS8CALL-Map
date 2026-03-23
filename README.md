@@ -10,9 +10,12 @@ An interactive browser-based map that displays the real-time locations of ham ra
 
 ## Features
 
-- **Live station plotting** — pins appear automatically as JS8CALL hears stations; inactive stations expire after 4 hours
+- **Live station plotting** — pins appear automatically as JS8CALL hears stations; inactive stations expire after 1 hour
+- **Grid-based location** — grids are extracted from both JS8CALL spot data and message text (e.g. `GRID FM16RS`)
 - **Signal-strength colour coding** — marker and sidebar colours reflect live SNR
 - **Maidenhead grid overlay** — toggleable overlay that auto-adjusts detail level as you zoom (field → square → subsquare); rendered on canvas at high zoom for smooth performance
+- **Day/Night overlay** — solar terminator updated every minute, useful for visualising HF propagation conditions
+- **Colour themes** — five built-in themes (Dark, Midnight, Terminal, Light, Slate); preference saved across sessions
 - **Station detail panel** — click any pin or sidebar entry to see:
   - Callsign, grid square, SNR (colour-coded)
   - Dial frequency and audio offset
@@ -22,10 +25,9 @@ An interactive browser-based map that displays the real-time locations of ham ra
 - **Unread message indicator** — blue dot on sidebar entries with new messages since you last viewed them
 - **Distance measurement tool** — step-by-step prompts guide you to click two points; shows distance (km / miles) and bearing
 - **Your home station** — pulsing blue square marker; map centres on your grid at startup
-- **Works offline** — Leaflet.js is bundled locally; only map tiles require internet
+- **Fully offline** — world basemap, Leaflet.js, and all assets are bundled locally; no internet connection required
 - **Auto-reconnect** — reconnects to JS8CALL automatically if it restarts; 15-second connect timeout prevents hangs
 - **Graceful shutdown** — `Ctrl+C` closes all connections cleanly
-- **Dark theme UI** — easy on the eyes during night operating sessions
 - **Accessible** — keyboard-navigable sidebar, ARIA labels, respects OS reduced-motion preference
 - **Collapsible sidebar** — maximise map space when needed
 
@@ -46,13 +48,14 @@ An interactive browser-based map that displays the real-time locations of ham ra
 
 ## JS8CALL Setup
 
-Before starting the map, enable the JS8CALL TCP API server:
+Before starting the map, configure the JS8CALL TCP API server:
 
 1. Open JS8CALL
 2. Go to **File → Settings → Reporting**
 3. Check **"Enable TCP Server"**
 4. Leave the port at the default **2237**
-5. Click **OK**
+5. Set **"Max TCP Connections"** to **3** (the default of 1 is not enough — the map uses one persistent connection for real-time events and additional short-lived connections to query station and activity data)
+6. Click **OK**
 
 ---
 
@@ -69,7 +72,7 @@ npm install
 npm start
 
 # 4. Open your browser
-#    http://localhost:8080
+#    http://localhost:8181
 ```
 
 ---
@@ -89,7 +92,7 @@ dist/
 └── js8call-map.exe
 ```
 
-All web assets (HTML, CSS, JS) and the Leaflet library are bundled inside the executable — **no additional files need to be distributed**.
+All web assets (HTML, CSS, JS), the Leaflet library, and the offline world map are bundled inside the executable — **no additional files need to be distributed**.
 
 ### Distributing to other operators
 
@@ -99,7 +102,7 @@ Send them the single file:
 js8call-map.exe   ← everything is inside; nothing else needed
 ```
 
-They double-click it, then open `http://localhost:8080` in any browser.
+They double-click it, then open `http://localhost:8181` in any browser.
 
 ---
 
@@ -115,13 +118,23 @@ They double-click it, then open `http://localhost:8080` in any browser.
 | Click a station in the sidebar | Open detail panel and pan to station |
 | Keyboard `Enter` / `Space` on sidebar item | Select station (keyboard accessible) |
 
-### Toolbar Buttons
+### Toolbar
 
-| Button | Function |
+| Control | Function |
 |---|---|
+| Theme selector | Switch between Dark, Midnight, Terminal, Light, and Slate colour themes |
 | **Grid** | Toggle the Maidenhead grid overlay on/off |
+| **Night** | Toggle the day/night (solar terminator) overlay — useful for HF propagation planning |
 | **Measure Distance** | Activate measure mode — a hint banner guides you to click two points |
 | **✕ Clear Measure** | Remove the measurement line and result |
+
+### Day / Night Overlay
+
+When enabled, a semi-transparent overlay shows the night side of Earth based on the current UTC time. The terminator line updates every minute as the Earth rotates. This is particularly useful for HF because:
+
+- The **D-layer** (which absorbs HF signals) dissipates at night
+- The **F-layer** remains reflective after dark, enabling long-distance skip
+- Signals generally propagate better across the night-side path
 
 ### Station Detail Panel
 
@@ -142,6 +155,15 @@ Click any station pin or sidebar entry to open the detail panel on the right. It
   - `DIRECTED` — message addressed to a specific callsign
   - `ACTIVITY` — general decoded activity
   - `BAND` — band activity text
+
+### Grid Location Detection
+
+A station pin only appears on the map once its Maidenhead grid square is known. The app learns a station's grid from two sources:
+
+1. **JS8CALL spot data** — the `GRID` field in `RX.SPOT` and `RX.CALL_ACTIVITY` events
+2. **Message text** — any message containing `GRID XXXX` or `GRID XXXXXX` (e.g. `W4AOE: KJ4QEO GRID EM85SI *`)
+
+Stations that have never transmitted their grid will appear in the sidebar but not on the map until a grid is received.
 
 ### Unread Message Indicator
 
@@ -170,26 +192,28 @@ server.js  (Node.js + Express + WebSocket)
         ▼
 Browser  (Leaflet.js + app.js)
         │
-        └─ http://localhost:8080
+        └─ http://localhost:8181
 ```
 
 **server.js responsibilities:**
-- Connects to JS8CALL's TCP API on port 2237 with a 15-second connect timeout
-- Validates all incoming callsigns against a strict pattern before storing
-- Polls for station and band activity every 30 seconds
-- Listens for real-time `RX.SPOT`, `RX.DIRECTED`, and `RX.ACTIVITY` events
-- Maintains an in-memory station store; removes stations not heard in 4 hours
-- Serves the web interface and bundled Leaflet library on port 8080
+- Maintains a **persistent listen-only TCP connection** to JS8CALL for real-time events (`RX.SPOT`, `RX.DIRECTED`, `RX.ACTIVITY`) — this socket is never written to
+- Opens **short-lived TCP connections** every 30 seconds to query callsign, grid, and activity history — each query connects, reads the response, and closes (requires Max TCP Connections ≥ 3 in JS8CALL settings)
+- Validates all incoming callsigns and sanitises frequency, offset, and message text before storing
+- Creates station stubs when messages arrive before spot data, preventing message loss
+- Maintains an in-memory station store; removes stations not heard in 1 hour
+- Serves the web interface, bundled Leaflet library, and offline world map data on port 8181
 - Pushes live updates to all connected browsers via WebSocket
 - Handles `SIGINT` / `SIGTERM` for graceful shutdown
 
 **app.js responsibilities:**
-- Renders a Leaflet map with a dark CartoDB basemap
+- Renders a Leaflet map with a fully offline vector world basemap (TopoJSON via world-atlas)
 - Draws the Maidenhead grid overlay (polylines at low zoom, canvas at zoom ≥ 9)
+- Calculates and renders the solar terminator for the day/night overlay
 - Places and updates station markers with SNR-based colours
 - Manages the station list sidebar with partial DOM updates (surgical patches, not full rebuilds)
 - Handles station selection, detail panel rendering, and message history display
 - Implements the distance / bearing measurement tool
+- Applies and persists colour theme selection via localStorage
 
 ---
 
@@ -204,8 +228,8 @@ JS8CALL Map/
 ├── README.md          This file
 └── public/
     ├── index.html     App shell, layout, ARIA landmark roles
-    ├── style.css      Dark theme, CSS custom properties, SNR colour classes
-    └── app.js         Leaflet map, grid overlay, markers, sidebar, measure tool
+    ├── style.css      Themes, CSS custom properties, SNR colour classes
+    └── app.js         Leaflet map, grid overlay, day/night overlay, markers, sidebar, measure tool
 ```
 
 ---
@@ -224,15 +248,18 @@ JS8CALL Map/
 
 **No stations appear on the map**
 - Stations only appear once JS8CALL decodes a signal — if the band is quiet or the radio is not receiving, no pins will appear
+- Stations will appear in the sidebar but not on the map until their grid square is known — this happens when JS8CALL reports it in spot data or when the station transmits a `GRID` message
 - Check the JS8CALL main window for decoded activity
-- Stations that have not been heard for 4 hours are automatically removed
+- Stations not heard for 1 hour are automatically removed
 
-**Map tiles are not loading**
-- The map tiles (background imagery) are fetched from CartoDB and require an internet connection
-- If running offline, the map background will be blank but all station pins and the grid overlay will still work correctly
+**"CONNECTIONS FULL" appears in JS8CALL or the map shows a constant disconnect loop**
+- JS8CALL's TCP connection limit has been reached (default is 1, which is not enough)
+- Go to **File → Settings → Reporting** in JS8CALL and set **Max TCP Connections** to **3**
+- Restart JS8CALL to clear any stuck connections, then restart the map server
 
-**Port 8080 is already in use**
-- Edit `server.js` and change `WEB_PORT` at the top of the file to any available port (e.g. `8181`)
+**Port conflict — server won't start**
+- Edit `server.js` and change `WEB_PORT` at the top of the file to any available port
+- The app currently uses port **8181**; if that is also taken, try `8282` or similar
 - Reopen your browser to the new port
 
 **Packaged .exe doesn't start**
@@ -257,5 +284,6 @@ MIT — see [LICENSE](LICENSE) for full text.
 
 - [JS8CALL](http://js8call.com/) by KN4CRD — JS8 digital mode software
 - [Leaflet.js](https://leafletjs.com/) — interactive mapping library
-- [CartoDB](https://carto.com/) — dark basemap tiles
+- [Natural Earth / world-atlas](https://github.com/topojson/world-atlas) — offline world map data
+- [topojson-client](https://github.com/topojson/topojson-client) — TopoJSON decoder
 - [pkg](https://github.com/vercel/pkg) — Node.js single-binary packager

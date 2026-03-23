@@ -130,11 +130,36 @@ const map = L.map('map', {
 });
 map.zoomControl.setPosition('bottomright');
 
-// Dark basemap — no API key required
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a> contributors &copy; <a href="https://carto.com">CARTO</a>',
-  maxZoom: 18,
-}).addTo(map);
+// Offline world basemap — rendered from locally-bundled TopoJSON (no internet required).
+// Ocean colour comes from .leaflet-container background (CSS variable --map-ocean).
+let worldLandLayer   = null;
+let worldBorderLayer = null;
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function updateMapColors() {
+  const land        = cssVar('--map-land');
+  const border      = cssVar('--map-border');
+  const borderInner = cssVar('--map-border-inner');
+  if (worldLandLayer)   worldLandLayer.setStyle({ fillColor: land, color: border });
+  if (worldBorderLayer) worldBorderLayer.setStyle({ color: borderInner });
+}
+
+fetch('/world-atlas/countries-110m.json')
+  .then(r => r.json())
+  .then(world => {
+    worldLandLayer = L.geoJSON(topojson.feature(world, world.objects.countries), {
+      style:       { fillColor: cssVar('--map-land'), fillOpacity: 1, color: cssVar('--map-border'), weight: 0.5 },
+      interactive: false,
+    }).addTo(map);
+    worldBorderLayer = L.geoJSON(topojson.mesh(world, world.objects.countries, (a, b) => a !== b), {
+      style:       { color: cssVar('--map-border-inner'), weight: 0.6, fill: false },
+      interactive: false,
+    }).addTo(map);
+  })
+  .catch(() => console.warn('World basemap failed to load'));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Maidenhead Grid — Polyline layer (fields & squares, zoom < 9)
@@ -164,8 +189,8 @@ function redrawPolyGrid() {
   const minLat = Math.floor(bounds.getSouth() / latStep) * latStep;
   const maxLat = Math.ceil(bounds.getNorth()  / latStep) * latStep;
 
-  const squareOpts = { color: 'rgba(0,210,180,0.30)', weight: 0.7, interactive: false };
-  const fieldOpts  = { color: 'rgba(0,210,180,0.70)', weight: 1.5, interactive: false };
+  const squareOpts = { color: cssVar('--grid-dim'),    weight: 0.7, interactive: false };
+  const fieldOpts  = { color: cssVar('--grid-bright'), weight: 1.5, interactive: false };
 
   function isFieldEdge(v, step, fieldStep) {
     return step < fieldStep && Math.abs(v % fieldStep) < step * 0.01;
@@ -260,7 +285,7 @@ const CanvasGridLayer = L.Layer.extend({
     const minLat = Math.floor(bounds.getSouth() / latStep) * latStep;
     const maxLat = Math.ceil(bounds.getNorth()  / latStep) * latStep;
 
-    ctx.strokeStyle = 'rgba(0,210,180,0.28)';
+    ctx.strokeStyle = cssVar('--grid-canvas');
     ctx.lineWidth   = 0.7;
     ctx.beginPath();
 
@@ -690,6 +715,101 @@ document.getElementById('btn-measure').addEventListener('click', () => {
 document.getElementById('btn-clear-measure').addEventListener('click', clearMeasure);
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Day / Night Overlay
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let nightLayer  = null;
+let nightVisible = false;
+let nightTimer  = null;
+
+/** Julian Day Number for a given Date. */
+function julianDay(date) {
+  return date.getTime() / 86400000 + 2440587.5;
+}
+
+/**
+ * Low-precision solar position (accurate to ~1°).
+ * Returns { dec: declination (rad), gha: Greenwich Hour Angle (rad) }.
+ */
+function sunPosition(date) {
+  const D2R = Math.PI / 180;
+  const JD  = julianDay(date);
+  const n   = JD - 2451545.0;                          // days since J2000.0
+
+  // Geometric mean longitude and mean anomaly (degrees)
+  const L   = (280.46 + 0.9856474 * n) % 360;
+  const g   = ((357.528 + 0.9856003 * n) % 360) * D2R;
+
+  // Ecliptic longitude and obliquity (degrees → rad)
+  const lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * D2R;
+  const eps = (23.439 - 0.0000004 * n) * D2R;
+
+  // Declination
+  const dec = Math.asin(Math.sin(eps) * Math.sin(lam));
+
+  // Greenwich Mean Sidereal Time → Greenwich Hour Angle
+  const JD0  = Math.floor(JD - 0.5) + 0.5;
+  const H    = (JD - JD0) * 24;
+  const T0   = (JD0 - 2451545.0) / 36525;
+  const gmst = ((6.697374558 + 2400.0513369 * T0 + 1.0027379093 * H) % 24 + 24) % 24;
+  const ra   = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)) / D2R;
+  const gha  = ((gmst * 15 - ra) % 360) * D2R;
+
+  return { dec, gha };
+}
+
+/**
+ * Build the night-side polygon coordinates.
+ * Traces the solar terminator then closes around the dark pole.
+ */
+function buildNightCoords(date) {
+  const D2R = Math.PI / 180;
+  const { dec, gha } = sunPosition(date);
+
+  const term = [];
+  for (let lon = -180; lon <= 180; lon++) {
+    const lonRad = lon * D2R;
+    const latRad = Math.atan(-Math.cos(lonRad + gha) / Math.tan(dec));
+    term.push([latRad / D2R, lon]);
+  }
+
+  // Include whichever pole is in darkness
+  const pole = dec > 0 ? -90 : 90;
+  return [[pole, -180], ...term, [pole, 180]];
+}
+
+function updateNightOverlay() {
+  const coords = buildNightCoords(new Date());
+  if (nightLayer) {
+    nightLayer.setLatLngs(coords);
+  } else {
+    nightLayer = L.polygon(coords, {
+      color:       'transparent',
+      fillColor:   '#000011',
+      fillOpacity: 0.45,
+      interactive: false,
+      className:   'night-overlay',
+    }).addTo(map);
+  }
+}
+
+document.getElementById('btn-night').addEventListener('click', () => {
+  nightVisible = !nightVisible;
+  const btn = document.getElementById('btn-night');
+  btn.classList.toggle('active', nightVisible);
+  btn.setAttribute('aria-pressed', String(nightVisible));
+
+  if (nightVisible) {
+    updateNightOverlay();
+    nightTimer = setInterval(updateNightOverlay, 60_000);
+  } else {
+    clearInterval(nightTimer);
+    nightTimer = null;
+    if (nightLayer) { nightLayer.remove(); nightLayer = null; }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Grid Toggle
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -700,6 +820,30 @@ document.getElementById('btn-grid').addEventListener('click', () => {
   btn.setAttribute('aria-pressed', String(gridVisible));
   if (gridVisible) { redrawGrid(); }
   else             { gridPolyLayer.clearLayers(); canvasGrid.clear(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Theme Switcher
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const THEMES = ['dark', 'midnight', 'green', 'light', 'slate'];
+
+function applyTheme(name) {
+  if (!THEMES.includes(name)) name = 'dark';
+  document.documentElement.dataset.theme = name === 'dark' ? '' : name;
+  document.getElementById('theme-select').value = name;
+  localStorage.setItem('js8map-theme', name);
+  // Update Leaflet layers that have inline styles
+  updateMapColors();
+  redrawGrid();
+  if (nightVisible) updateNightOverlay();
+}
+
+// Restore saved theme on load
+applyTheme(localStorage.getItem('js8map-theme') || 'dark');
+
+document.getElementById('theme-select').addEventListener('change', e => {
+  applyTheme(e.target.value);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

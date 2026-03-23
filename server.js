@@ -9,12 +9,13 @@ const path      = require('path');
 // ─── Configuration ────────────────────────────────────────────────────────────
 const JS8CALL_HOST     = '127.0.0.1';
 const JS8CALL_PORT     = 2237;
-const WEB_PORT         = 8080;
+const WEB_PORT         = 8181;
 const POLL_INTERVAL    = 30_000;               // ms between activity polls
 const MAX_MESSAGES     = 100;                  // messages kept per station
-const STATION_TTL      = 4 * 60 * 60 * 1000;  // 4 hours — then station is removed
+const STATION_TTL      = 1 * 60 * 60 * 1000;  // 1 hour — then station is removed
 const CLEANUP_INTERVAL = 60_000;               // run expiry check every minute
 const CALLSIGN_RE      = /^[A-Z0-9/]{2,12}$/; // basic sanity check on callsigns
+const MAX_MSG_TEXT     = 500;                  // characters kept per message text
 
 // ─── Station Store ────────────────────────────────────────────────────────────
 // Map<callsign, { callsign, grid, snr, freq, offset, utc, lastHeard, firstSeen, messages[] }>
@@ -29,7 +30,10 @@ const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve Leaflet from node_modules so the app works fully offline
-app.use('/leaflet', express.static(path.join(__dirname, 'node_modules/leaflet/dist')));
+app.use('/leaflet',      express.static(path.join(__dirname, 'node_modules/leaflet/dist')));
+// Serve world map data and TopoJSON client for fully offline basemap
+app.use('/world-atlas',  express.static(path.join(__dirname, 'node_modules/world-atlas')));
+app.use('/topojson',     express.static(path.join(__dirname, 'node_modules/topojson-client/dist')));
 
 const httpServer = http.createServer(app);
 const wss = new WebSocket.Server({ server: httpServer });
@@ -69,7 +73,7 @@ wss.on('connection', ws => {
 });
 
 // ─── Station Expiry ───────────────────────────────────────────────────────────
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const cutoff = Date.now() - STATION_TTL;
   for (const [callsign, station] of stations) {
     if ((station.lastHeard || station.firstSeen || 0) < cutoff) {
@@ -81,23 +85,86 @@ setInterval(() => {
 }, CLEANUP_INTERVAL);
 
 // ─── JS8CALL TCP Client ───────────────────────────────────────────────────────
+// JS8CALL uses the persistent TCP connection as a one-way event stream.
+// Writing to it causes JS8CALL to close the connection.  Queries therefore use
+// short-lived connections: connect → write one command → read response → done.
+
 let socket    = null;
 let rxBuffer  = '';
 let pollTimer = null;
 
-function sendCmd(type, value = '', extra = {}) {
-  if (!socket || !js8callConnected) return;
-  const packet = JSON.stringify({ type, value, params: { _ID: Date.now(), ...extra } });
-  try { socket.write(packet + '\n'); } catch (e) {
-    console.error('JS8CALL write error:', e.message);
-  }
+/**
+ * Send a single command to JS8CALL and resolve with the first JSON response.
+ * Opens and closes its own connection so the event-listener socket is never written to.
+ */
+function queryJS8Call(type, value = '', extra = {}) {
+  return new Promise((resolve, reject) => {
+    const conn = new net.Socket();
+    let buf = '';
+    const deadline = setTimeout(() => {
+      conn.removeAllListeners();
+      conn.destroy();
+      reject(new Error('timeout'));
+    }, 5_000);
+
+    conn.connect(JS8CALL_PORT, JS8CALL_HOST, () => {
+      const packet = JSON.stringify({ type, value, params: { _ID: Date.now(), ...extra } });
+      conn.write(packet + '\n');
+    });
+
+    conn.on('data', chunk => {
+      buf += chunk.toString('utf8');
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed);
+          clearTimeout(deadline);
+          conn.removeAllListeners('close');
+          conn.destroy();
+          resolve(parsed);
+        } catch (_) {}
+        return;
+      }
+    });
+
+    conn.on('error', err => { clearTimeout(deadline); reject(err); });
+    conn.on('close', () => { clearTimeout(deadline); reject(new Error('closed')); });
+  });
 }
 
-function pollJS8Call() {
-  sendCmd('STATION.GET_CALLSIGN');
-  sendCmd('STATION.GET_GRID');
-  sendCmd('RX.GET_CALL_ACTIVITY');
-  sendCmd('RX.GET_BAND_ACTIVITY');
+async function pollJS8Call() {
+  if (!js8callConnected) return;
+
+  const query = async (type) => {
+    try { return await queryJS8Call(type); }
+    catch (err) {
+      if (err.message !== 'timeout' && err.message !== 'closed') {
+        console.debug(`Poll ${type} failed: ${err.message}`);
+      }
+      return null;
+    }
+  };
+
+  const cs = await query('STATION.GET_CALLSIGN');
+  if (cs?.value) {
+    myStation.callsign = cs.value.trim().toUpperCase();
+    broadcast({ type: 'MY_STATION', myStation });
+  }
+
+  const grid = await query('STATION.GET_GRID');
+  if (grid?.value) {
+    myStation.grid = grid.value.trim().toUpperCase();
+    broadcast({ type: 'MY_STATION', myStation });
+  }
+
+  const callActivity = await query('RX.GET_CALL_ACTIVITY');
+  if (callActivity) processMessage(JSON.stringify(callActivity));
+
+  const bandActivity = await query('RX.GET_BAND_ACTIVITY');
+  if (bandActivity) processMessage(JSON.stringify(bandActivity));
 }
 
 // ─── Message Processing ───────────────────────────────────────────────────────
@@ -132,8 +199,11 @@ function processMessage(raw) {
     case 'RX.DIRECTED': {
       const from = clean(params.FROM);
       if (!from) break;
-      touchStation(from, stationUpdate(params));
       const text = (params.TEXT || value || '').trim();
+      const update = stationUpdate(params);
+      const grid = gridFromText(text);
+      if (grid) update.grid = grid;
+      touchStation(from, update);
       if (text) pushMessage(from, {
         from, to: clean(params.TO),
         text, utc: params.UTC ?? Date.now(), kind: 'directed',
@@ -144,8 +214,11 @@ function processMessage(raw) {
     case 'RX.ACTIVITY': {
       const from = clean(params.FROM || params.CALLSIGN);
       if (!from) break;
-      touchStation(from, stationUpdate(params));
       const text = (params.TEXT || value || '').trim();
+      const update = stationUpdate(params);
+      const grid = gridFromText(text);
+      if (grid) update.grid = grid;
+      touchStation(from, update);
       if (text) pushMessage(from, {
         from, to: clean(params.TO),
         text, utc: params.UTC ?? Date.now(), kind: 'activity',
@@ -166,6 +239,8 @@ function processMessage(raw) {
           utc:    info.UTC ?? Date.now(),
         });
         const text = (info.TEXT || '').trim();
+        const grid = gridFromText(text);
+        if (grid) touchStation(callsign, { grid });
         if (text) pushMessage(callsign, {
           from: callsign, to: '', text, utc: info.UTC ?? Date.now(), kind: 'activity',
         });
@@ -180,13 +255,17 @@ function processMessage(raw) {
         const m = info.TEXT.match(/^([A-Z0-9/]{2,12})\s/);
         if (!m) continue;
         const cs = m[1];
-        touchStation(cs, {
+        const text = info.TEXT.trim();
+        const update = {
           snr:  toNum(info.SNR),
           freq: toNum(info.DIAL ?? info.FREQ),
           utc:  info.UTC ?? Date.now(),
-        });
+        };
+        const grid = gridFromText(text);
+        if (grid) update.grid = grid;
+        touchStation(cs, update);
         pushMessage(cs, {
-          from: cs, to: '', text: info.TEXT.trim(),
+          from: cs, to: '', text,
           utc: info.UTC ?? Date.now(), kind: 'band',
         });
       }
@@ -203,10 +282,32 @@ function clean(v) {
   return String(v || '').trim().toUpperCase();
 }
 
+/**
+ * Extract a Maidenhead grid locator from free-form message text.
+ * Matches "GRID FM16RS" or "GRID FM16" patterns (case-insensitive).
+ * Returns the locator in uppercase, or null if none found.
+ */
+function gridFromText(text) {
+  const m = String(text || '').match(/\bGRID\s+([A-R]{2}[0-9]{2}(?:[A-X]{2})?)\b/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
 function toNum(v) {
   if (v === undefined || v === null || v === '') return undefined;
   const n = Number(v);
   return isNaN(n) ? undefined : n;
+}
+
+function toFreq(v) {
+  const n = toNum(v);
+  // HF range 1–30 MHz; JS8CALL reports in Hz so allow up to 30 000 000
+  return (n !== undefined && n >= 1_000_000 && n <= 30_000_000) ? n : undefined;
+}
+
+function toOffset(v) {
+  const n = toNum(v);
+  // Audio offset within a ~3 kHz SSB passband
+  return (n !== undefined && n >= 0 && n <= 4_000) ? n : undefined;
 }
 
 /** Build a station-update object from a raw JS8CALL params block. */
@@ -214,8 +315,8 @@ function stationUpdate(params) {
   return {
     grid:   clean(params.GRID),
     snr:    toNum(params.SNR),
-    freq:   toNum(params.DIAL ?? params.FREQ),
-    offset: toNum(params.OFFSET),
+    freq:   toFreq(params.DIAL ?? params.FREQ),
+    offset: toOffset(params.OFFSET),
     utc:    params.UTC ?? Date.now(),
   };
 }
@@ -242,9 +343,12 @@ function touchStation(callsign, update) {
 
 function pushMessage(callsign, msg) {
   if (!callsign || !CALLSIGN_RE.test(callsign)) return;
+  // Create a stub if the station hasn't been spotted yet so the message isn't lost.
+  if (!stations.has(callsign)) {
+    stations.set(callsign, { callsign, messages: [], firstSeen: Date.now(), lastHeard: Date.now() });
+  }
   const station = stations.get(callsign);
-  if (!station) return;
-  station.messages = station.messages || [];
+  if (msg.text && msg.text.length > MAX_MSG_TEXT) msg.text = msg.text.slice(0, MAX_MSG_TEXT) + '…';
   station.messages.unshift(msg);
   if (station.messages.length > MAX_MESSAGES) station.messages.length = MAX_MESSAGES;
   broadcast({ type: 'NEW_MESSAGE', callsign, message: msg });
@@ -269,6 +373,7 @@ function connectToJS8Call() {
     console.log('✓  JS8CALL connected');
     js8callConnected = true;
     broadcast({ type: 'CONNECTION_STATUS', connected: true });
+    // Queries use separate short-lived connections; this socket only listens.
     pollJS8Call();
     pollTimer = setInterval(pollJS8Call, POLL_INTERVAL);
   });
@@ -294,7 +399,6 @@ function connectToJS8Call() {
   socket.on('error', err => {
     clearTimeout(connectTimeout);
     console.error('JS8CALL socket error:', err.message);
-    // Destroy the socket so the 'close' event fires and triggers reconnection
     socket.destroy();
   });
 
@@ -313,6 +417,7 @@ function connectToJS8Call() {
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
 function shutdown(signal) {
   console.log(`\n${signal} received — shutting down…`);
+  clearInterval(cleanupTimer);
   clearInterval(pollTimer);
   if (socket) socket.destroy();
   wss.close(() => {

@@ -1,6 +1,7 @@
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ══ Theme: Dark (default) ══════════════════════════════════════════════════ */
 :root {
   --bg-base:      #0d1117;
   --bg-surface:   #161b22;
@@ -14,13 +15,170 @@
   --accent:       #388bfd;
   --accent-dim:   #1f3b6e;
   --accent-text:  #79c0ff;
-  /* SNR palette */
-  --snr-strong: #3fb950;
-  --snr-good:   #7ee787;
-  --snr-fair:   #e3b341;
-  --snr-weak:   #f0883e;
-  --snr-vweak:  #f85149;
+  /* SNR palette — semantic, constant across themes */
+  --snr-strong:  #3fb950;
+  --snr-good:    #7ee787;
+  --snr-fair:    #e3b341;
+  --snr-weak:    #f0883e;
+  --snr-vweak:   #f85149;
   --snr-unknown: #607d8b;
+  /* Map */
+  --map-ocean:        #0d0d1f;
+  --map-land:         #1e1e38;
+  --map-border:       #3a3a5a;
+  --map-border-inner: #4a4a6e;
+  --grid-bright:  rgba(0,210,180,0.70);
+  --grid-dim:     rgba(0,210,180,0.30);
+  --grid-canvas:  rgba(0,210,180,0.28);
+  --grid-label:        rgba(0,210,180,0.65);
+  --grid-label-field:  rgba(0,220,190,0.85);
+  --grid-label-shadow: 0 0 4px #000, 0 0 4px #000;
+  /* UI chrome */
+  --title-color:       #00d4ff;
+  --badge-bg:          #0d2137;
+  --badge-color:       #00b4d8;
+  --badge-border:      #0077b6;
+  --item-hover:        #1c2128;
+  --item-selected-bg:  #0d2137;
+  --item-selected-border: var(--accent);
+}
+
+/* ══ Theme: Midnight ════════════════════════════════════════════════════════ */
+[data-theme="midnight"] {
+  --bg-base:      #000000;
+  --bg-surface:   #0a0a0a;
+  --bg-raised:    #111111;
+  --bg-overlay:   #1a1a1a;
+  --border:       #111111;
+  --border-muted: #222222;
+  --text:         #e0e0e0;
+  --text-muted:   #888888;
+  --text-dim:     #444444;
+  --accent:       #00bcd4;
+  --accent-dim:   #00333d;
+  --accent-text:  #00e5ff;
+  --map-ocean:        #050508;
+  --map-land:         #0d0d18;
+  --map-border:       #1a1a2a;
+  --map-border-inner: #252535;
+  --grid-bright:  rgba(0,200,220,0.70);
+  --grid-dim:     rgba(0,200,220,0.25);
+  --grid-canvas:  rgba(0,200,220,0.22);
+  --grid-label:        rgba(0,200,220,0.65);
+  --grid-label-field:  rgba(0,220,240,0.85);
+  --grid-label-shadow: 0 0 4px #000, 0 0 4px #000;
+  --title-color:       #00e5ff;
+  --badge-bg:          #00222a;
+  --badge-color:       #00e5ff;
+  --badge-border:      #00bcd4;
+  --item-hover:        #111111;
+  --item-selected-bg:  #00222a;
+  --item-selected-border: #00bcd4;
+}
+
+/* ══ Theme: Terminal (green on black) ═══════════════════════════════════════ */
+[data-theme="green"] {
+  --bg-base:      #000e00;
+  --bg-surface:   #001500;
+  --bg-raised:    #001e00;
+  --bg-overlay:   #002600;
+  --border:       #002600;
+  --border-muted: #003800;
+  --text:         #00e834;
+  --text-muted:   #00a025;
+  --text-dim:     #005912;
+  --accent:       #00ff41;
+  --accent-dim:   #004d14;
+  --accent-text:  #00ff88;
+  --snr-strong:  #00ff88;
+  --snr-good:    #00cc66;
+  --snr-fair:    #cccc00;
+  --snr-weak:    #cc7700;
+  --snr-vweak:   #cc2200;
+  --snr-unknown: #336633;
+  --map-ocean:        #000800;
+  --map-land:         #001200;
+  --map-border:       #002200;
+  --map-border-inner: #003300;
+  --grid-bright:  rgba(0,255,65,0.60);
+  --grid-dim:     rgba(0,255,65,0.20);
+  --grid-canvas:  rgba(0,255,65,0.18);
+  --grid-label:        rgba(0,255,65,0.65);
+  --grid-label-field:  rgba(0,255,100,0.85);
+  --grid-label-shadow: 0 0 4px #000, 0 0 4px #000;
+  --title-color:       #00ff41;
+  --badge-bg:          #002800;
+  --badge-color:       #00ff88;
+  --badge-border:      #00aa44;
+  --item-hover:        #001e00;
+  --item-selected-bg:  #003300;
+  --item-selected-border: #00ff41;
+}
+
+/* ══ Theme: Light ═══════════════════════════════════════════════════════════ */
+[data-theme="light"] {
+  --bg-base:      #f6f8fa;
+  --bg-surface:   #ffffff;
+  --bg-raised:    #eef1f4;
+  --bg-overlay:   #e4e8ed;
+  --border:       #d0d7de;
+  --border-muted: #c8d0d8;
+  --text:         #1f2328;
+  --text-muted:   #656d76;
+  --text-dim:     #a8b1ba;
+  --accent:       #0969da;
+  --accent-dim:   #ddf4ff;
+  --accent-text:  #0550ae;
+  --map-ocean:        #b8cfe8;
+  --map-land:         #dde8d8;
+  --map-border:       #a0b8a0;
+  --map-border-inner: #889888;
+  --grid-bright:  rgba(0,100,160,0.70);
+  --grid-dim:     rgba(0,100,160,0.30);
+  --grid-canvas:  rgba(0,100,160,0.25);
+  --grid-label:        rgba(0,80,140,0.75);
+  --grid-label-field:  rgba(0,60,120,0.90);
+  --grid-label-shadow: none;
+  --title-color:       #0969da;
+  --badge-bg:          #ddf4ff;
+  --badge-color:       #0550ae;
+  --badge-border:      #54aeff;
+  --item-hover:        #eef1f4;
+  --item-selected-bg:  #ddf4ff;
+  --item-selected-border: #0969da;
+}
+
+/* ══ Theme: Slate ═══════════════════════════════════════════════════════════ */
+[data-theme="slate"] {
+  --bg-base:      #0f1923;
+  --bg-surface:   #1a2535;
+  --bg-raised:    #243040;
+  --bg-overlay:   #2e3d52;
+  --border:       #243040;
+  --border-muted: #3a4d63;
+  --text:         #cdd9e5;
+  --text-muted:   #768da3;
+  --text-dim:     #4a5d72;
+  --accent:       #4fc3f7;
+  --accent-dim:   #1a3a4d;
+  --accent-text:  #81d4fa;
+  --map-ocean:        #0a1020;
+  --map-land:         #192540;
+  --map-border:       #2a3850;
+  --map-border-inner: #3a4d63;
+  --grid-bright:  rgba(80,200,250,0.65);
+  --grid-dim:     rgba(80,200,250,0.25);
+  --grid-canvas:  rgba(80,200,250,0.22);
+  --grid-label:        rgba(80,200,250,0.65);
+  --grid-label-field:  rgba(100,220,255,0.85);
+  --grid-label-shadow: 0 0 4px #000, 0 0 4px #000;
+  --title-color:       #4fc3f7;
+  --badge-bg:          #1a3a4d;
+  --badge-color:       #81d4fa;
+  --badge-border:      #4fc3f7;
+  --item-hover:        #1f2f42;
+  --item-selected-bg:  #1a3a4d;
+  --item-selected-border: #4fc3f7;
 }
 
 body {
@@ -49,15 +207,15 @@ body {
 #app-title {
   font-size: 1.05rem;
   font-weight: 700;
-  color: #00d4ff;
+  color: var(--title-color);
   letter-spacing: 0.06em;
   white-space: nowrap;
 }
 
 #my-callsign-badge {
-  background: #0d2137;
-  color: #00b4d8;
-  border: 1px solid #0077b6;
+  background: var(--badge-bg);
+  color: var(--badge-color);
+  border: 1px solid var(--badge-border);
   padding: 2px 10px;
   border-radius: 12px;
   font-size: 0.8rem;
@@ -69,6 +227,7 @@ body {
   display: flex;
   gap: 6px;
   margin-left: auto;
+  align-items: center;
 }
 
 .btn {
@@ -83,8 +242,21 @@ body {
   white-space: nowrap;
 }
 .btn:hover         { background: var(--bg-overlay); color: var(--text); }
-.btn.active        { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+.btn.active        { background: var(--accent-dim); border-color: var(--accent); color: var(--text); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Theme selector */
+#theme-select {
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  height: 28px;
+}
+#theme-select:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 #connection-status {
   font-size: 0.78rem;
@@ -184,8 +356,8 @@ body {
   transition: background 0.12s;
   position: relative;
 }
-.station-item:hover                     { background: #1c2128; }
-.station-item.selected                  { background: #0d2137; border-left: 3px solid var(--accent); padding-left: 9px; }
+.station-item:hover                     { background: var(--item-hover); }
+.station-item.selected                  { background: var(--item-selected-bg); border-left: 3px solid var(--item-selected-border); padding-left: 9px; }
 .station-item:focus-visible             { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* Unread-message indicator dot */
@@ -220,29 +392,26 @@ body {
 }
 
 /* ── SNR Classes ──────────────────────────────────────────────────────────── */
-/* Used on text elements, badges, and station markers */
-.snr-strong { color: var(--snr-strong); }
-.snr-good   { color: var(--snr-good);   }
-.snr-fair   { color: var(--snr-fair);   }
-.snr-weak   { color: var(--snr-weak);   }
-.snr-vweak  { color: var(--snr-vweak);  }
+.snr-strong  { color: var(--snr-strong); }
+.snr-good    { color: var(--snr-good);   }
+.snr-fair    { color: var(--snr-fair);   }
+.snr-weak    { color: var(--snr-weak);   }
+.snr-vweak   { color: var(--snr-vweak);  }
 .snr-unknown { color: var(--snr-unknown); }
 
-/* Badge background tint + border */
 .snr-badge               { padding: 1px 6px; border-radius: 8px; font-size: 0.68rem; font-weight: 700; border: 1px solid transparent; }
 .snr-badge.snr-strong    { background: #3fb95020; border-color: #3fb95050; }
 .snr-badge.snr-good      { background: #7ee78720; border-color: #7ee78750; }
 .snr-badge.snr-fair      { background: #e3b34120; border-color: #e3b34150; }
 .snr-badge.snr-weak      { background: #f0883e20; border-color: #f0883e50; }
 .snr-badge.snr-vweak     { background: #f8514920; border-color: #f8514950; }
-.snr-badge.snr-unknown    { background: #607d8b20; border-color: #607d8b50; }
+.snr-badge.snr-unknown   { background: #607d8b20; border-color: #607d8b50; }
 
-/* Marker background colour by SNR class */
-.station-marker.snr-strong { background-color: var(--snr-strong); }
-.station-marker.snr-good   { background-color: var(--snr-good);   }
-.station-marker.snr-fair   { background-color: var(--snr-fair);   }
-.station-marker.snr-weak   { background-color: var(--snr-weak);   }
-.station-marker.snr-vweak  { background-color: var(--snr-vweak);  }
+.station-marker.snr-strong  { background-color: var(--snr-strong); }
+.station-marker.snr-good    { background-color: var(--snr-good);   }
+.station-marker.snr-fair    { background-color: var(--snr-fair);   }
+.station-marker.snr-weak    { background-color: var(--snr-weak);   }
+.station-marker.snr-vweak   { background-color: var(--snr-vweak);  }
 .station-marker.snr-unknown { background-color: var(--snr-unknown); }
 
 /* ── Map ──────────────────────────────────────────────────────────────────── */
@@ -252,25 +421,29 @@ body {
   background: var(--bg-base);
 }
 
-/* Apply crosshair to every child element inside the map during measure mode.
-   Leaflet sets cursor on many nested elements so the wildcard is necessary. */
+.leaflet-container { background: var(--map-ocean); }
+
+/* Night overlay sits below markers */
+.night-overlay { pointer-events: none; }
+
+/* Crosshair during measure mode */
 #map.measuring,
 #map.measuring * { cursor: crosshair !important; }
 
-/* ── Maidenhead Grid Labels ────────────────────────────────────────────────── */
+/* ── Maidenhead Grid Labels ─────────────────────────────────────────────── */
 .grid-label {
   background: none !important;
   border: none !important;
-  color: rgba(0, 210, 180, 0.65);
+  color: var(--grid-label);
   font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
   pointer-events: none;
-  text-shadow: 0 0 4px #000, 0 0 4px #000;
+  text-shadow: var(--grid-label-shadow);
   line-height: 1;
 }
 .grid-label-field {
-  color: rgba(0, 220, 190, 0.85);
+  color: var(--grid-label-field);
   font-size: 13px;
   font-weight: 700;
 }
@@ -278,22 +451,18 @@ body {
 /* ── Station Markers ──────────────────────────────────────────────────────── */
 .station-marker {
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.30);
+  border: 2px solid rgba(255,255,255,0.30);
   cursor: pointer;
   transition: transform 0.15s;
-  position: relative;  /* required so ::after pulse ring is positioned correctly */
+  position: relative;
 }
-.station-marker:hover   { transform: scale(1.4); }
+.station-marker:hover    { transform: scale(1.4); }
 .station-marker.selected {
   transform: scale(1.5);
   border-color: #fff;
   box-shadow: 0 0 8px rgba(255,255,255,0.45);
 }
 
-/*
-  Home station: blue square with a pulse animation.
-  Uses transform+opacity (GPU-friendly) instead of box-shadow.
-*/
 .station-marker.my-station {
   border-radius: 3px !important;
   background-color: #2196f3 !important;
@@ -309,13 +478,13 @@ body {
   pointer-events: none;
 }
 @keyframes home-pulse {
-  0%   { opacity: 0.8; transform: scale(1); }
+  0%   { opacity: 0.8; transform: scale(1);   }
   80%  { opacity: 0;   transform: scale(2.0); }
   100% { opacity: 0;   transform: scale(2.0); }
 }
 
 .leaflet-tooltip.station-tooltip {
-  background: rgba(22, 27, 34, 0.94);
+  background: rgba(22,27,34,0.94);
   border: 1px solid var(--border-muted);
   color: var(--accent-text);
   font-weight: 700;
@@ -330,7 +499,7 @@ body {
   top: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(22, 27, 34, 0.95);
+  background: var(--bg-surface);
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 7px 18px;
@@ -355,15 +524,14 @@ body {
   z-index: 900;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
   overflow: hidden;
 }
 #detail-panel.hidden { display: none; }
 
 #detail-close {
   position: absolute;
-  top: 9px;
-  right: 11px;
+  top: 9px; right: 11px;
   background: none;
   border: none;
   color: var(--text-dim);
@@ -464,10 +632,10 @@ body {
   gap: 5px;
   margin-bottom: 3px;
 }
-.message-time { color: var(--text-dim); font-size: 0.68rem; }
+.message-time { color: var(--text-dim);   font-size: 0.68rem; }
 .message-to   { color: var(--text-muted); font-size: 0.68rem; }
 .message-text {
-  color: #c9d1d9;
+  color: var(--text);
   font-size: 0.78rem;
   word-break: break-word;
   line-height: 1.4;
@@ -492,7 +660,7 @@ body {
   bottom: 28px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(22, 27, 34, 0.97);
+  background: var(--bg-surface);
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 9px 20px;
@@ -500,7 +668,7 @@ body {
   z-index: 900;
   text-align: center;
   white-space: nowrap;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
 }
 #measure-result.hidden { display: none; }
 
@@ -518,23 +686,22 @@ body {
 .measure-clear-btn:hover { background: var(--bg-overlay); color: var(--text); }
 
 /* ── Reduced-motion accessibility ────────────────────────────────────────── */
-/* Disable animations for users who have requested reduced motion in their OS */
 @media (prefers-reduced-motion: reduce) {
   .station-marker.my-station::after { animation: none; }
-  .station-marker                   { transition: none; }
-  .btn                              { transition: none; }
-  .station-item                     { transition: none; }
+  .station-marker { transition: none; }
+  .btn            { transition: none; }
+  .station-item   { transition: none; }
 }
 
-/* ── Leaflet dark-theme overrides ─────────────────────────────────────────── */
+/* ── Leaflet overrides ────────────────────────────────────────────────────── */
 .leaflet-control-zoom a {
   background-color: var(--bg-surface) !important;
   color: var(--text) !important;
   border-color: var(--border-muted) !important;
 }
-.leaflet-control-zoom a:hover  { background-color: var(--bg-raised) !important; }
+.leaflet-control-zoom a:hover { background-color: var(--bg-raised) !important; }
 .leaflet-control-attribution {
-  background: rgba(13, 17, 23, 0.8) !important;
+  background: var(--bg-surface) !important;
   color: var(--text-dim) !important;
   font-size: 0.65rem !important;
 }

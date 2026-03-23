@@ -3,13 +3,16 @@
   "version": "1.0.0",
   "description": "Interactive Maidenhead grid map for JS8CALL operator locations",
   "main": "server.js",
+  "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "package": "pkg server.js --targets node18-win-x64 --output dist/js8call-map.exe"
+    "package": "pkg . --targets node18-win-x64 --output dist/js8call-map.exe"
   },
   "pkg": {
     "assets": [
-      "public/**/*",
+      "public/index.html",
+      "public/app.js",
+      "public/style.css",
       "node_modules/leaflet/dist/**",
       "node_modules/world-atlas/**",
       "node_modules/topojson-client/dist/**"

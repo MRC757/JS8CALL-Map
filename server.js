@@ -5,6 +5,7 @@ const http      = require('http');
 const express   = require('express');
 const WebSocket = require('ws');
 const path      = require('path');
+const fs        = require('fs');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 const JS8CALL_HOST     = '127.0.0.1';
@@ -26,8 +27,11 @@ let   js8callConnected = false;
 // ─── HTTP + WebSocket Server ──────────────────────────────────────────────────
 const app = express();
 
-// Serve the web UI
-app.use(express.static(path.join(__dirname, 'public')));
+// Serve the web UI — use readFileSync so assets work inside the pkg bundle
+const PUBLIC = path.join(__dirname, 'public');
+app.get('/',          (_req, res) => res.type('html').send(fs.readFileSync(path.join(PUBLIC, 'index.html'))));
+app.get('/app.js',    (_req, res) => res.type('js').send(fs.readFileSync(path.join(PUBLIC, 'app.js'))));
+app.get('/style.css', (_req, res) => res.type('css').send(fs.readFileSync(path.join(PUBLIC, 'style.css'))));
 
 // Serve Leaflet from node_modules so the app works fully offline
 app.use('/leaflet',      express.static(path.join(__dirname, 'node_modules/leaflet/dist')));

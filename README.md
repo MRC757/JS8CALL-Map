@@ -94,15 +94,26 @@ dist/
 
 All web assets (HTML, CSS, JS), the Leaflet library, and the offline world map are bundled inside the executable — **no additional files need to be distributed**.
 
+### Desktop shortcut (optional)
+
+For a one-click launch that opens the map in your browser automatically, use the included `launch.bat` (found in the project root):
+
+1. Right-click `launch.bat` → **Create shortcut**
+2. Move the shortcut to your Desktop
+3. Optionally set a custom icon: right-click shortcut → **Properties → Change Icon** → browse to `js8call-map.exe`
+
+`launch.bat` starts the server and opens `http://localhost:8181` in your default browser after a short delay.
+
 ### Distributing to other operators
 
-Send them the single file:
+Send them both files (or the zip from the [Releases](../../releases) page):
 
 ```
-js8call-map.exe   ← everything is inside; nothing else needed
+js8call-map.exe   ← the server (everything bundled inside)
+launch.bat        ← optional one-click launcher
 ```
 
-They double-click it, then open `http://localhost:8181` in any browser.
+They double-click `launch.bat` (or the `.exe` directly), then open `http://localhost:8181` in any browser.
 
 ---
 
@@ -222,6 +233,7 @@ Browser  (Leaflet.js + app.js)
 ```
 JS8CALL Map/
 ├── server.js          Node.js backend — TCP bridge, WebSocket server, station store
+├── launch.bat         One-click launcher — starts server and opens browser
 ├── package.json       Project config, npm scripts, pkg bundler config
 ├── .gitignore         Git exclusions
 ├── LICENSE            MIT licence

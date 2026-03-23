@@ -1,6 +1,10 @@
 # JS8CALL Map
 
 An interactive browser-based map that displays the real-time locations of ham radio operators heard by your local [JS8CALL](http://js8call.com/) station. Stations are plotted on a Maidenhead grid map with signal strength, frequency data, message history, and distance/bearing tools.
+![Light](https://github.com/user-attachments/assets/7c6e1e9f-239b-4f4f-bd51-27bef5bcf27c)
+![Slate](https://github.com/user-attachments/assets/960c92b4-2686-47f2-97e5-3d8729c45378)
+![Grid](https://github.com/user-attachments/assets/c46d8a2f-1dca-4d7b-9b15-3594879c7939)
+![JS8CALL_Settings](https://github.com/user-attachments/assets/904b0411-2f8b-41e0-a97e-83a1ea8867aa)
 
 ---
 

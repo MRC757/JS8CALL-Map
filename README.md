@@ -15,6 +15,7 @@ An interactive browser-based map that displays the real-time locations of ham ra
 - **Signal-strength colour coding** — marker and sidebar colours reflect live SNR
 - **Maidenhead grid overlay** — toggleable overlay that auto-adjusts detail level as you zoom (field → square → subsquare); rendered on canvas at high zoom for smooth performance
 - **Day/Night overlay** — solar terminator updated every minute, useful for visualising HF propagation conditions
+- **US overlays** — toggleable US state/county borders with county name labels (zoom ≥ 8) and interstate highway routes with route number labels (zoom ≥ 7); all data bundled offline
 - **Colour themes** — five built-in themes (Dark, Midnight, Terminal, Light, Slate); preference saved across sessions
 - **Station detail panel** — click any pin or sidebar entry to see:
   - Callsign, grid square, SNR (colour-coded)
@@ -136,6 +137,8 @@ They double-click `launch.bat` (or the `.exe` directly), then open `http://local
 | Theme selector | Switch between Dark, Midnight, Terminal, Light, and Slate colour themes |
 | **Grid** | Toggle the Maidenhead grid overlay on/off |
 | **Night** | Toggle the day/night (solar terminator) overlay — useful for HF propagation planning |
+| **US States** | Toggle US state and county border overlay; county names appear at zoom ≥ 8 |
+| **Interstates** | Toggle US interstate highway overlay; route numbers appear at zoom ≥ 7 |
 | **Measure Distance** | Activate measure mode — a hint banner guides you to click two points |
 | **✕ Clear Measure** | Remove the measurement line and result |
 
@@ -220,6 +223,7 @@ Browser  (Leaflet.js + app.js)
 - Renders a Leaflet map with a fully offline vector world basemap (TopoJSON via world-atlas)
 - Draws the Maidenhead grid overlay (polylines at low zoom, canvas at zoom ≥ 9)
 - Calculates and renders the solar terminator for the day/night overlay
+- Renders US state/county borders and interstate highways from bundled offline data; shows county name and route number labels at appropriate zoom levels
 - Places and updates station markers with SNR-based colours
 - Manages the station list sidebar with partial DOM updates (surgical patches, not full rebuilds)
 - Handles station selection, detail panel rendering, and message history display
@@ -241,7 +245,10 @@ JS8CALL Map/
 └── public/
     ├── index.html     App shell, layout, ARIA landmark roles
     ├── style.css      Themes, CSS custom properties, SNR colour classes
-    └── app.js         Leaflet map, grid overlay, day/night overlay, markers, sidebar, measure tool
+    ├── app.js         Leaflet map, grid overlay, day/night overlay, US overlays, markers, sidebar, measure tool
+    └── data/
+        ├── interstates.geojson   US interstate highway routes (Census TIGER-derived, simplified)
+        └── county_names.json     FIPS → county name lookup (3,143 entries)
 ```
 
 ---
@@ -297,5 +304,7 @@ MIT — see [LICENSE](LICENSE) for full text.
 - [JS8CALL](http://js8call.com/) by KN4CRD — JS8 digital mode software
 - [Leaflet.js](https://leafletjs.com/) — interactive mapping library
 - [Natural Earth / world-atlas](https://github.com/topojson/world-atlas) — offline world map data
+- [us-atlas](https://github.com/topojson/us-atlas) — offline US state and county boundary data
+- [US Census Bureau TIGER/Line](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html) — interstate highway source data
 - [topojson-client](https://github.com/topojson/topojson-client) — TopoJSON decoder
 - [pkg](https://github.com/vercel/pkg) — Node.js single-binary packager

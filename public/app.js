@@ -129,11 +129,27 @@ const map = L.map('map', {
   zoomControl: true,
 });
 map.zoomControl.setPosition('bottomright');
+map.on('zoomend', updateOverlayLabels);
 
 // Offline world basemap — rendered from locally-bundled TopoJSON (no internet required).
 // Ocean colour comes from .leaflet-container background (CSS variable --map-ocean).
 let worldLandLayer   = null;
 let worldBorderLayer = null;
+
+// US state/county overlay
+let usNationLayer    = null;
+let usStatesLayer    = null;
+let usCountiesLayer  = null;
+let usCountyLabels   = null;
+let usAtlasData      = null;
+let usCountyNames    = null;
+let usCountiesVisible = false;
+
+// US interstate highway overlay
+let usHighwayLayer   = null;
+let usHighwayLabels  = null;
+let usHighwayData    = null;
+let usHighwaysVisible = false;
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -143,8 +159,152 @@ function updateMapColors() {
   const land        = cssVar('--map-land');
   const border      = cssVar('--map-border');
   const borderInner = cssVar('--map-border-inner');
+  const county      = cssVar('--map-county');
+  const highway     = cssVar('--map-highway');
   if (worldLandLayer)   worldLandLayer.setStyle({ fillColor: land, color: border });
   if (worldBorderLayer) worldBorderLayer.setStyle({ color: borderInner });
+  if (usNationLayer)    usNationLayer.setStyle({ color: border });
+  if (usStatesLayer)    usStatesLayer.setStyle({ color: borderInner });
+  if (usCountiesLayer)  usCountiesLayer.setStyle({ color: county });
+  if (usHighwayLayer)   usHighwayLayer.setStyle({ color: highway });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Centroid of a polygon's exterior ring (array of [lon,lat]). */
+function ringCentroid(ring) {
+  let x = 0, y = 0;
+  for (const [lon, lat] of ring) { x += lon; y += lat; }
+  return [x / ring.length, y / ring.length];
+}
+
+/** Midpoint of a LineString (array of [lon,lat]). */
+function lineMidpoint(coords) {
+  return coords[Math.floor(coords.length / 2)];
+}
+
+/** Format route code like "I105" → "I-105". */
+function fmtRoute(r) {
+  return r.replace(/^I(\d)/, 'I-$1');
+}
+
+// ── Data loaders ─────────────────────────────────────────────────────────────
+
+function loadUsAtlas() {
+  if (usAtlasData) return Promise.resolve(usAtlasData);
+  return fetch('/us-atlas/counties-10m.json')
+    .then(r => r.json())
+    .then(d => { usAtlasData = d; return d; })
+    .catch(() => { console.warn('US atlas data failed to load'); return null; });
+}
+
+function loadUsCountyNames() {
+  if (usCountyNames) return Promise.resolve(usCountyNames);
+  return fetch('/data/county_names.json')
+    .then(r => r.json())
+    .then(d => { usCountyNames = d; return d; })
+    .catch(() => { usCountyNames = {}; return {}; });
+}
+
+function loadUsHighways() {
+  if (usHighwayData) return Promise.resolve(usHighwayData);
+  return fetch('/data/interstates.geojson')
+    .then(r => r.json())
+    .then(d => { usHighwayData = d; return d; })
+    .catch(() => { console.warn('Interstate data failed to load'); return null; });
+}
+
+// ── Label visibility (zoom-dependent) ────────────────────────────────────────
+
+function updateOverlayLabels() {
+  const zoom = map.getZoom();
+  if (usCountyLabels) {
+    if (usCountiesVisible && zoom >= 8) { if (!map.hasLayer(usCountyLabels))  map.addLayer(usCountyLabels); }
+    else                                { if (map.hasLayer(usCountyLabels))   map.removeLayer(usCountyLabels); }
+  }
+  if (usHighwayLabels) {
+    if (usHighwaysVisible && zoom >= 7) { if (!map.hasLayer(usHighwayLabels)) map.addLayer(usHighwayLabels); }
+    else                                { if (map.hasLayer(usHighwayLabels))  map.removeLayer(usHighwayLabels); }
+  }
+}
+
+// ── Show / hide ───────────────────────────────────────────────────────────────
+
+function showUsCounties() {
+  if (usNationLayer) return;
+  Promise.all([loadUsAtlas(), loadUsCountyNames()]).then(([us, names]) => {
+    if (!us || !usCountiesVisible) return;
+    usNationLayer = L.geoJSON(topojson.mesh(us, us.objects.nation), {
+      style: { color: cssVar('--map-border'), weight: 1.0, fill: false },
+      interactive: false,
+    }).addTo(map);
+    usStatesLayer = L.geoJSON(topojson.mesh(us, us.objects.states, (a, b) => a !== b), {
+      style: { color: cssVar('--map-border-inner'), weight: 0.8, fill: false },
+      interactive: false,
+    }).addTo(map);
+    usCountiesLayer = L.geoJSON(topojson.mesh(us, us.objects.counties, (a, b) => a !== b), {
+      style: { color: cssVar('--map-county'), weight: 0.4, fill: false },
+      interactive: false,
+    }).addTo(map);
+
+    // County name labels — one per county polygon, shown at zoom ≥ 8
+    const labelGroup = L.layerGroup();
+    for (const f of topojson.feature(us, us.objects.counties).features) {
+      const name = names[f.id];
+      if (!name) continue;
+      const geom = f.geometry;
+      const ring = geom.type === 'Polygon'
+        ? geom.coordinates[0]
+        : geom.coordinates.reduce((a, b) => b[0].length > a[0].length ? b : a)[0];
+      const [lon, lat] = ringCentroid(ring);
+      L.marker([lat, lon], {
+        icon: L.divIcon({ className: 'us-county-label', html: name, iconSize: null }),
+        interactive: false,
+      }).addTo(labelGroup);
+    }
+    usCountyLabels = labelGroup;
+    updateOverlayLabels();
+  });
+}
+
+function hideUsCounties() {
+  if (usNationLayer)    { usNationLayer.remove();                usNationLayer   = null; }
+  if (usStatesLayer)    { usStatesLayer.remove();                usStatesLayer   = null; }
+  if (usCountiesLayer)  { usCountiesLayer.remove();              usCountiesLayer = null; }
+  if (usCountyLabels)   { map.removeLayer(usCountyLabels);       usCountyLabels  = null; }
+}
+
+function showUsHighways() {
+  if (usHighwayLayer) return;
+  loadUsHighways().then(data => {
+    if (!data || !usHighwaysVisible) return;
+    usHighwayLayer = L.geoJSON(data, {
+      style: { color: cssVar('--map-highway'), weight: 1.2, fill: false },
+      interactive: false,
+    }).addTo(map);
+
+    // Interstate route labels — one per feature segment, shown at zoom ≥ 7
+    const labelGroup = L.layerGroup();
+    for (const f of data.features) {
+      const route = fmtRoute(f.properties.route || '');
+      if (!route) continue;
+      const coords = f.geometry.type === 'LineString'
+        ? f.geometry.coordinates
+        : f.geometry.coordinates.reduce((a, b) => b.length > a.length ? b : a);
+      const [lon, lat] = lineMidpoint(coords);
+      L.marker([lat, lon], {
+        icon: L.divIcon({ className: 'us-highway-label', html: route, iconSize: null }),
+        interactive: false,
+      }).addTo(labelGroup);
+    }
+    usHighwayLabels = labelGroup;
+    updateOverlayLabels();
+  });
+}
+
+function hideUsHighways() {
+  if (usHighwayLayer)  { usHighwayLayer.remove();               usHighwayLayer  = null; }
+  if (usHighwayLabels) { map.removeLayer(usHighwayLabels);      usHighwayLabels = null; }
 }
 
 fetch('/world-atlas/countries-110m.json')
@@ -807,6 +967,32 @@ document.getElementById('btn-night').addEventListener('click', () => {
     nightTimer = null;
     if (nightLayer) { nightLayer.remove(); nightLayer = null; }
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  US State / County Toggle
+// ═══════════════════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-us-counties').addEventListener('click', () => {
+  usCountiesVisible = !usCountiesVisible;
+  const btn = document.getElementById('btn-us-counties');
+  btn.classList.toggle('active', usCountiesVisible);
+  btn.setAttribute('aria-pressed', String(usCountiesVisible));
+  if (usCountiesVisible) { showUsCounties(); }
+  else                   { hideUsCounties(); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Interstate Highway Toggle
+// ═══════════════════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-us-highways').addEventListener('click', () => {
+  usHighwaysVisible = !usHighwaysVisible;
+  const btn = document.getElementById('btn-us-highways');
+  btn.classList.toggle('active', usHighwaysVisible);
+  btn.setAttribute('aria-pressed', String(usHighwaysVisible));
+  if (usHighwaysVisible) { showUsHighways(); }
+  else                   { hideUsHighways(); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

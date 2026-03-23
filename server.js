@@ -38,6 +38,11 @@ app.use('/leaflet',      express.static(path.join(__dirname, 'node_modules/leafl
 // Serve world map data and TopoJSON client for fully offline basemap
 app.use('/world-atlas',  express.static(path.join(__dirname, 'node_modules/world-atlas')));
 app.use('/topojson',     express.static(path.join(__dirname, 'node_modules/topojson-client/dist')));
+// Serve US state/county atlas data for offline US overlay
+app.use('/us-atlas',     express.static(path.join(__dirname, 'node_modules/us-atlas')));
+// Serve bundled data files
+app.get('/data/interstates.geojson',  (_req, res) => res.type('json').send(fs.readFileSync(path.join(PUBLIC, 'data/interstates.geojson'))));
+app.get('/data/county_names.json',    (_req, res) => res.type('json').send(fs.readFileSync(path.join(PUBLIC, 'data/county_names.json'))));
 
 const httpServer = http.createServer(app);
 const wss = new WebSocket.Server({ server: httpServer });

@@ -96,7 +96,9 @@ jobs:
           cat lintian.txt
           if grep -E "wrong-name-for-changelog|no-manual-page|manpage-has" lintian.txt; then exit 1; fi
       - name: Install
-        run: sudo apt-get install -y "./$DEB"
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y "./$DEB"
       - name: Run the installed app
         run: |
           set -e

@@ -15,13 +15,25 @@ name: Release
 # If a release for the tag already exists (e.g. you wrote the notes by hand
 # first), the files are attached to it; otherwise one is created with notes
 # generated from the commits since the previous tag.
+#
+# To rebuild an existing release (e.g. after fixing this workflow), run it by
+# hand: Actions > Release > Run workflow, or  gh workflow run release.yml -f tag=v1.3.0
+# It builds from the tagged commit using the current workflow, and replaces the files.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)build, e.g. v1.3.0
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   prepare:
@@ -29,20 +41,22 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - name: Check the tag matches package.json
         run: |
-          tag="${GITHUB_REF_NAME#v}"; tag="${tag#V}"
+          tag="${TAG#v}"; tag="${tag#V}"
           version="$(node -p "require('./package.json').version")"
           if [ "$tag" != "$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+            echo "::error::Tag $TAG does not match package.json version $version"
             exit 1
           fi
       - name: Create the release if it doesn't exist
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || \
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --latest --notes \
+          gh release view "$TAG" > /dev/null 2>&1 || \
+          gh release create "$TAG" --title "$TAG" --generate-notes --latest --notes \
             "**Windows:** download the \`windows-x64.zip\`, unzip and double-click \`js8call-map.exe\`.
           **Linux / Raspberry Pi:** download the \`amd64.deb\` (PC) or \`arm64.deb\` (Raspberry Pi 4/5, 64-bit OS) and install with \`sudo apt install ./js8call-map_*.deb\`."
 
@@ -52,6 +66,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -73,9 +89,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          name="js8call-map-$GITHUB_REF_NAME-windows-x64.zip"
+          name="js8call-map-$TAG-windows-x64.zip"
           pwsh -Command "Compress-Archive -Path dist/js8call-map.exe -DestinationPath $name"
-          gh release upload "$GITHUB_REF_NAME" "$name" --clobber
+          gh release upload "$TAG" "$name" --clobber
 
   linux:
     needs: prepare
@@ -89,6 +105,8 @@ jobs:
           - { arch: arm64, pkg: arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -104,7 +122,8 @@ jobs:
         run: |
           set -e
           dpkg-deb --info "$DEB"
-          sudo apt-get install -y "./$DEB"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "./$DEB"
           js8call-map --no-open --port 18181 --js8-port 1 > run.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:18181/ > /dev/null && break; sleep 1; done
           curl -sf http://127.0.0.1:18181/js/main.js > /dev/null
@@ -112,7 +131,7 @@ jobs:
       - name: Upload
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" "$DEB" --clobber
+        run: gh release upload "$TAG" "$DEB" --clobber
 
   checksums:
     needs: [windows, linux]
@@ -125,6 +144,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mkdir assets && cd assets
-          gh release download "$GITHUB_REF_NAME" --pattern '*.zip' --pattern '*.deb'
+          gh release download "$TAG" --pattern '*.zip' --pattern '*.deb'
           sha256sum * | tee SHA256SUMS
-          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber
+          gh release upload "$TAG" SHA256SUMS --clobber

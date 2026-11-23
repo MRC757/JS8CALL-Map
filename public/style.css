@@ -581,6 +581,7 @@ body {
 
 #detail-content {
   overflow-y: auto;
+  overflow-anchor: none;   /* app.js keeps the reading position when messages arrive */
   padding: 16px;
   flex: 1;
 }

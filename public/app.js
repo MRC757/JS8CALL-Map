@@ -1,85 +1,11 @@
 'use strict';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Maidenhead Grid Utilities
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/** Convert a Maidenhead locator to a {lat, lon} centre point. */
-function gridToLatLon(grid) {
-  if (!grid || grid.length < 4) return null;
-  grid = grid.toUpperCase();
-  const A = 65;
-
-  let lon = (grid.charCodeAt(0) - A) * 20 - 180;
-  let lat = (grid.charCodeAt(1) - A) * 10 - 90;
-  lon += (grid.charCodeAt(2) - 48) * 2;
-  lat += (grid.charCodeAt(3) - 48);
-
-  if (grid.length >= 6) {
-    lon += (grid.charCodeAt(4) - A) * (5 / 60) + (2.5 / 60);
-    lat += (grid.charCodeAt(5) - A) * (2.5 / 60) + (1.25 / 60);
-  } else {
-    lon += 1;    // centre of 2° square
-    lat += 0.5;  // centre of 1° square
-  }
-
-  return { lat, lon };
-}
-
-/** Convert {lat, lon} to a Maidenhead locator string. precision: 2, 4, or 6. */
-function latLonToGrid(lat, lon, precision = 4) {
-  const A = 65;
-  let lo = Math.max(0, Math.min(360, lon + 180));
-  let la = Math.max(0, Math.min(180, lat + 90));
-
-  const fLon = Math.min(Math.floor(lo / 20), 17);
-  const fLat = Math.min(Math.floor(la / 10), 17);
-
-  if (precision <= 2) {
-    return String.fromCharCode(A + fLon) + String.fromCharCode(A + fLat);
-  }
-
-  lo -= fLon * 20;
-  la -= fLat * 10;
-
-  const sLon = Math.min(Math.floor(lo / 2), 9);
-  const sLat = Math.min(Math.floor(la),     9);
-
-  let g = String.fromCharCode(A + fLon) + String.fromCharCode(A + fLat)
-        + sLon + sLat;
-
-  if (precision >= 6) {
-    lo -= sLon * 2;
-    la -= sLat;
-    const ssLon = Math.min(Math.floor(lo * 12), 23);
-    const ssLat = Math.min(Math.floor(la * 24), 23);
-    g += String.fromCharCode(A + ssLon) + String.fromCharCode(A + ssLat);
-  }
-
-  return g;
-}
+// Grid / geo helpers live in grid.js (shared with the server and tests).
+const { gridToLatLon, latLonToGrid, haversineKm, bearingDeg, spreadOffsets } = window.Grid;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Geo / Signal Helpers
+//  Display Helpers
 // ═══════════════════════════════════════════════════════════════════════════════
-
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const R    = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a    = Math.sin(dLat / 2) ** 2
-             + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
-             * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function bearingDeg(lat1, lon1, lat2, lon2) {
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const y    = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
-  const x    = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180)
-             - Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
-  return Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
-}
 
 /** Return a CSS class name for the given SNR value. */
 function snrClass(snr) {
@@ -129,7 +55,7 @@ const map = L.map('map', {
   zoomControl: true,
 });
 map.zoomControl.setPosition('bottomright');
-map.on('zoomend', updateOverlayLabels);
+map.on('moveend', updateOverlayLabels);   // also fires after zoom
 
 // Offline world basemap — rendered from locally-bundled TopoJSON (no internet required).
 // Ocean colour comes from .leaflet-container background (CSS variable --map-ocean).
@@ -214,18 +140,48 @@ function loadUsHighways() {
     .catch(() => { console.warn('Interstate data failed to load'); return null; });
 }
 
-// ── Label visibility (zoom-dependent) ────────────────────────────────────────
+// ── Labels (zoom- and viewport-dependent) ────────────────────────────────────
+
+/**
+ * A set of text labels that only keeps the ones inside the current view on the
+ * map. There are ~3,200 county labels; adding them all at once is slow.
+ * items: [{ lat, lon, text }]
+ */
+class ViewportLabels {
+  constructor(items, className, minZoom) {
+    this.items     = items.map(i => ({ ...i, latlng: L.latLng(i.lat, i.lon), marker: null, shown: false }));
+    this.className = className;
+    this.minZoom   = minZoom;
+    this.group     = L.layerGroup().addTo(map);
+  }
+
+  update(enabled) {
+    const show   = enabled && map.getZoom() >= this.minZoom;
+    const bounds = show ? map.getBounds().pad(0.2) : null;
+    for (const it of this.items) {
+      const want = show && bounds.contains(it.latlng);
+      if (want === it.shown) continue;
+      if (want) {
+        it.marker = it.marker || L.marker(it.latlng, {
+          icon: L.divIcon({ className: this.className, html: escHtml(it.text), iconSize: null }),
+          interactive: false,
+        });
+        this.group.addLayer(it.marker);
+      } else {
+        this.group.removeLayer(it.marker);
+      }
+      it.shown = want;
+    }
+  }
+
+  get shownCount() { return this.items.filter(i => i.shown).length; }
+
+  remove() { this.group.remove(); }
+}
 
 function updateOverlayLabels() {
-  const zoom = map.getZoom();
-  if (usCountyLabels) {
-    if (usCountiesVisible && zoom >= 8) { if (!map.hasLayer(usCountyLabels))  map.addLayer(usCountyLabels); }
-    else                                { if (map.hasLayer(usCountyLabels))   map.removeLayer(usCountyLabels); }
-  }
-  if (usHighwayLabels) {
-    if (usHighwaysVisible && zoom >= 7) { if (!map.hasLayer(usHighwayLabels)) map.addLayer(usHighwayLabels); }
-    else                                { if (map.hasLayer(usHighwayLabels))  map.removeLayer(usHighwayLabels); }
-  }
+  if (usCountyLabels)  usCountyLabels.update(usCountiesVisible);
+  if (usHighwayLabels) usHighwayLabels.update(usHighwaysVisible);
 }
 
 // ── Show / hide ───────────────────────────────────────────────────────────────
@@ -248,7 +204,7 @@ function showUsCounties() {
     }).addTo(map);
 
     // County name labels — one per county polygon, shown at zoom ≥ 8
-    const labelGroup = L.layerGroup();
+    const items = [];
     for (const f of topojson.feature(us, us.objects.counties).features) {
       const name = names[f.id];
       if (!name) continue;
@@ -257,12 +213,9 @@ function showUsCounties() {
         ? geom.coordinates[0]
         : geom.coordinates.reduce((a, b) => b[0].length > a[0].length ? b : a)[0];
       const [lon, lat] = ringCentroid(ring);
-      L.marker([lat, lon], {
-        icon: L.divIcon({ className: 'us-county-label', html: name, iconSize: null }),
-        interactive: false,
-      }).addTo(labelGroup);
+      items.push({ lat, lon, text: name });
     }
-    usCountyLabels = labelGroup;
+    usCountyLabels = new ViewportLabels(items, 'us-county-label', 8);
     updateOverlayLabels();
   });
 }
@@ -271,7 +224,7 @@ function hideUsCounties() {
   if (usNationLayer)    { usNationLayer.remove();                usNationLayer   = null; }
   if (usStatesLayer)    { usStatesLayer.remove();                usStatesLayer   = null; }
   if (usCountiesLayer)  { usCountiesLayer.remove();              usCountiesLayer = null; }
-  if (usCountyLabels)   { map.removeLayer(usCountyLabels);       usCountyLabels  = null; }
+  if (usCountyLabels)   { usCountyLabels.remove();               usCountyLabels  = null; }
 }
 
 function showUsHighways() {
@@ -284,7 +237,7 @@ function showUsHighways() {
     }).addTo(map);
 
     // Interstate route labels — one per feature segment, shown at zoom ≥ 7
-    const labelGroup = L.layerGroup();
+    const items = [];
     for (const f of data.features) {
       const route = fmtRoute(f.properties.route || '');
       if (!route) continue;
@@ -292,19 +245,16 @@ function showUsHighways() {
         ? f.geometry.coordinates
         : f.geometry.coordinates.reduce((a, b) => b.length > a.length ? b : a);
       const [lon, lat] = lineMidpoint(coords);
-      L.marker([lat, lon], {
-        icon: L.divIcon({ className: 'us-highway-label', html: route, iconSize: null }),
-        interactive: false,
-      }).addTo(labelGroup);
+      items.push({ lat, lon, text: route });
     }
-    usHighwayLabels = labelGroup;
+    usHighwayLabels = new ViewportLabels(items, 'us-highway-label', 7);
     updateOverlayLabels();
   });
 }
 
 function hideUsHighways() {
   if (usHighwayLayer)  { usHighwayLayer.remove();               usHighwayLayer  = null; }
-  if (usHighwayLabels) { map.removeLayer(usHighwayLabels);      usHighwayLabels = null; }
+  if (usHighwayLabels) { usHighwayLabels.remove();              usHighwayLabels = null; }
 }
 
 fetch('/world-atlas/countries-110m.json')
@@ -410,28 +360,50 @@ const CanvasGridLayer = L.Layer.extend({
       pointerEvents:  'none',
       zIndex:         '250',
     });
+    // The canvas covers the viewport (it isn't inside a panning pane), so it is
+    // redrawn on every 'move' — throttled to one draw per animation frame.
     map.getContainer().appendChild(this._canvas);
-    this._onUpdate = this._update.bind(this);
-    map.on('moveend zoomend resize', this._onUpdate);
-    this._update();
+    this._onResize    = this._resize.bind(this);
+    this._onMove      = this._schedule.bind(this);
+    this._onZoomStart = this.clear.bind(this);   // lines would drift during the zoom animation
+    map.on('resize', this._onResize);
+    map.on('move moveend zoomend', this._onMove);
+    map.on('zoomstart', this._onZoomStart);
+    this._resize();
   },
 
   onRemove(map) {
     this._canvas.remove();
-    map.off('moveend zoomend resize', this._onUpdate);
+    map.off('resize', this._onResize);
+    map.off('move moveend zoomend', this._onMove);
+    map.off('zoomstart', this._onZoomStart);
+    if (this._frame) cancelAnimationFrame(this._frame);
   },
 
-  _update() {
+  _resize() {
     const size = this._map.getSize();
-    this._canvas.width  = size.x;
-    this._canvas.height = size.y;
+    const dpr  = window.devicePixelRatio || 1;
+    this._dpr  = dpr;
+    this._canvas.width        = Math.round(size.x * dpr);
+    this._canvas.height       = Math.round(size.y * dpr);
+    this._canvas.style.width  = size.x + 'px';
+    this._canvas.style.height = size.y + 'px';
     this._draw();
+  },
+
+  _schedule() {
+    if (this._frame) return;
+    this._frame = requestAnimationFrame(() => { this._frame = null; this._draw(); });
   },
 
   _draw() {
     const map  = this._map;
+    if (!map || !this._canvas) return;
+    if ((window.devicePixelRatio || 1) !== this._dpr) return this._resize();  // moved to another screen
+
     const ctx  = this._canvas.getContext('2d');
     const size = map.getSize();
+    ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
     ctx.clearRect(0, 0, size.x, size.y);
 
     if (!gridVisible || map.getZoom() < 9) return;
@@ -469,6 +441,7 @@ const CanvasGridLayer = L.Layer.extend({
   clear() {
     if (!this._canvas) return;
     const ctx = this._canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
   },
 });
@@ -500,65 +473,112 @@ let   maxMessages    = 100;         // updated from server SNAPSHOT
 //  Station Markers
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function markerIcon(station, isHome = false) {
-  const sc   = isHome ? '' : snrClass(station.snr);
-  const size = isHome ? 14 : 12;
-  const sel  = station.callsign === selectedCall ? ' selected' : '';
-  const home = isHome ? ' my-station' : '';
+// Stations in the same grid square share one centre point. Markers at the same
+// point are fanned out by a few pixels so each one stays visible and clickable.
+const markerPosKey  = new Map();   // callsign → "lat,lon" key of its marker
+const posGroups     = new Map();   // "lat,lon" → Set of callsigns at that point
+const markerOffsets = new Map();   // callsign → [dx, dy] screen offset in px
+
+const isHomeCall = cs => !!cs && cs === myStation.callsign;
+
+function markerIcon(station) {
+  const isHome = isHomeCall(station.callsign);
+  const sc     = isHome ? '' : snrClass(station.snr);
+  const size   = isHome ? 14 : 12;
+  const sel    = station.callsign === selectedCall ? ' selected' : '';
+  const home   = isHome ? ' my-station' : '';
+  const [dx, dy] = markerOffsets.get(station.callsign) || [0, 0];
   return L.divIcon({
     className: '',
     html: `<div class="station-marker ${sc}${home}${sel}"
                style="width:${size}px;height:${size}px;"
                title="${escHtml(station.callsign)}"></div>`,
-    iconSize:   [size, size],
-    iconAnchor: [size / 2, size / 2],
+    iconSize:      [size, size],
+    iconAnchor:    [size / 2 - dx, size / 2 - dy],
+    tooltipAnchor: [dx, dy],
   });
 }
 
-function placeOrUpdateMarker(station, isHome = false) {
-  if (!station.grid) return;
+/** Re-compute the fan-out offsets for every marker at one point. */
+function relayoutGroup(key) {
+  const group = posGroups.get(key);
+  if (!group) return;
+  // Home first (stays nearest the true centre), then alphabetical for stability.
+  const calls = [...group].sort((a, b) =>
+    (isHomeCall(b) - isHomeCall(a)) || a.localeCompare(b));
+  const offsets = spreadOffsets(calls.length);
+  calls.forEach((cs, i) => {
+    const prev = markerOffsets.get(cs);
+    const next = offsets[i];
+    if (prev && prev[0] === next[0] && prev[1] === next[1]) return;
+    markerOffsets.set(cs, next);
+    refreshMarker(cs);
+  });
+}
+
+function leaveGroup(callsign) {
+  const key = markerPosKey.get(callsign);
+  if (!key) return;
+  markerPosKey.delete(callsign);
+  markerOffsets.delete(callsign);
+  const group = posGroups.get(key);
+  if (!group) return;
+  group.delete(callsign);
+  if (group.size) relayoutGroup(key); else posGroups.delete(key);
+}
+
+function joinGroup(callsign, key) {
+  if (markerPosKey.get(callsign) === key) return;
+  leaveGroup(callsign);
+  markerPosKey.set(callsign, key);
+  if (!posGroups.has(key)) posGroups.set(key, new Set());
+  posGroups.get(key).add(callsign);
+  relayoutGroup(key);
+}
+
+function placeOrUpdateMarker(station) {
+  if (!station.callsign) return;
   const pos = gridToLatLon(station.grid);
   if (!pos) return;
+  const key = pos.lat.toFixed(5) + ',' + pos.lon.toFixed(5);
+  const cs  = station.callsign;
 
-  const existing = stationMarkers.get(station.callsign);
-  if (existing) {
-    existing.setLatLng([pos.lat, pos.lon]);
-    existing.setIcon(markerIcon(station, isHome));
-    return;
+  let marker = stationMarkers.get(cs);
+  if (marker) {
+    marker.setLatLng([pos.lat, pos.lon]);
+  } else {
+    marker = L.marker([pos.lat, pos.lon], { icon: markerIcon(station), title: cs });
+    marker.bindTooltip(cs, {
+      permanent:  false,
+      direction:  'top',
+      className:  'station-tooltip',
+      offset:     [0, -8],
+    });
+    marker.on('click', e => {
+      if (measuring) { handleMeasureClick(e); return; }
+      selectStation(cs);
+    });
+    marker.addTo(map);
+    stationMarkers.set(cs, marker);
   }
 
-  const marker = L.marker([pos.lat, pos.lon], {
-    icon:        markerIcon(station, isHome),
-    title:       station.callsign,
-    zIndexOffset: isHome ? 1000 : 0,
-  });
-
-  marker.bindTooltip(station.callsign, {
-    permanent:  false,
-    direction:  'top',
-    className:  'station-tooltip',
-    offset:     [0, -8],
-  });
-
-  marker.on('click', e => {
-    if (measuring) { handleMeasureClick(e); return; }
-    selectStation(station.callsign);
-  });
-
-  marker.addTo(map);
-  stationMarkers.set(station.callsign, marker);
+  marker.setZIndexOffset(isHomeCall(cs) ? 1000 : 0);
+  joinGroup(cs, key);
+  marker.setIcon(markerIcon(station));
 }
 
 function refreshMarker(callsign) {
   const marker  = stationMarkers.get(callsign);
   const station = stationData.get(callsign);
   if (!marker || !station) return;
-  marker.setIcon(markerIcon(station, callsign === myStation.callsign));
+  marker.setIcon(markerIcon(station));
+  marker.setZIndexOffset(isHomeCall(callsign) ? 1000 : 0);
 }
 
 function removeMarker(callsign) {
   const marker = stationMarkers.get(callsign);
   if (marker) { map.removeLayer(marker); stationMarkers.delete(callsign); }
+  leaveGroup(callsign);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -686,13 +706,20 @@ function selectStation(callsign) {
   renderDetailPanel(station);
 }
 
-function renderDetailPanel(station) {
-  const panel   = document.getElementById('detail-panel');
-  const content = document.getElementById('detail-content');
+// The detail panel is built once per selection. Later updates patch the stats
+// and insert new message rows so the message list keeps its scroll position.
 
-  // Distance and bearing from home
+function detailGridHtml(station) {
+  return `
+      <span>Grid: <strong>${escHtml(station.grid || '—')}</strong></span>
+      <a class="qrz-link"
+         href="https://www.qrz.com/db/${encodeURIComponent(station.callsign)}"
+         target="_blank" rel="noopener noreferrer">QRZ &#8599;</a>`;
+}
+
+function detailStatsHtml(station) {
   let distHtml = '';
-  if (myStation.grid && station.grid && station.callsign !== myStation.callsign) {
+  if (myStation.grid && station.grid && !isHomeCall(station.callsign)) {
     const myPos = gridToLatLon(myStation.grid);
     const stPos = gridToLatLon(station.grid);
     if (myPos && stPos) {
@@ -717,35 +744,14 @@ function renderDetailPanel(station) {
   const freqText   = station.freq   ? (station.freq / 1e6).toFixed(4) + ' MHz' : '—';
   const offsetText = station.offset ? station.offset + ' Hz'                   : '—';
 
-  const msgs    = station.messages || [];
-  const msgsHtml = msgs.length
-    ? msgs.map(m => `
-        <div class="message-item">
-          <div class="message-header">
-            <span class="kind-badge kind-${escHtml(m.kind || 'activity')}">${escHtml(m.kind || 'rx')}</span>
-            <span class="message-time">${formatUTC(m.utc)}</span>
-            ${m.to ? `<span class="message-to">&#8594; ${escHtml(m.to)}</span>` : ''}
-          </div>
-          <div class="message-text">${escHtml(m.text)}</div>
-        </div>`).join('')
-    : '<div class="no-messages">No messages recorded yet</div>';
-
-  content.innerHTML = `
-    <div class="detail-callsign">${escHtml(station.callsign)}</div>
-    <div class="detail-grid-row">
-      <span>Grid: <strong>${escHtml(station.grid || '—')}</strong></span>
-      <a class="qrz-link"
-         href="https://www.qrz.com/db/${encodeURIComponent(station.callsign)}"
-         target="_blank" rel="noopener noreferrer">QRZ &#8599;</a>
-    </div>
-    <div class="detail-stats">
+  return `
       <div class="detail-stat">
         <div class="detail-stat-label">SNR</div>
         <div class="detail-stat-value ${snrClass(station.snr)}">${snrLabel(station.snr)}</div>
       </div>
       <div class="detail-stat">
         <div class="detail-stat-label">Last Heard</div>
-        <div class="detail-stat-value">${timeAgo(station.lastHeard)}</div>
+        <div class="detail-stat-value" id="detail-last-heard">${timeAgo(station.lastHeard)}</div>
       </div>
       <div class="detail-stat">
         <div class="detail-stat-label">Dial Frequency</div>
@@ -755,15 +761,77 @@ function renderDetailPanel(station) {
         <div class="detail-stat-label">Audio Offset</div>
         <div class="detail-stat-value">${offsetText}</div>
       </div>
-      ${distHtml}
-    </div>
-    <div class="detail-messages-header">
-      <span>Messages</span><span>${msgs.length}</span>
-    </div>
-    <div id="detail-messages">${msgsHtml}</div>
-  `;
+      ${distHtml}`;
+}
 
+function messageHtml(m) {
+  return `
+        <div class="message-item">
+          <div class="message-header">
+            <span class="kind-badge kind-${escHtml(m.kind || 'activity')}">${escHtml(m.kind || 'rx')}</span>
+            <span class="message-time">${formatUTC(m.utc)}</span>
+            ${m.to ? `<span class="message-to">&#8594; ${escHtml(m.to)}</span>` : ''}
+          </div>
+          <div class="message-text">${escHtml(m.text)}</div>
+        </div>`;
+}
+
+const NO_MESSAGES_HTML = '<div class="no-messages">No messages recorded yet</div>';
+
+/** Full render — used when a station is selected. */
+function renderDetailPanel(station) {
+  const panel   = document.getElementById('detail-panel');
+  const content = document.getElementById('detail-content');
+  const msgs    = station.messages || [];
+
+  content.innerHTML = `
+    <div class="detail-callsign">${escHtml(station.callsign)}</div>
+    <div class="detail-grid-row" id="detail-grid-row">${detailGridHtml(station)}</div>
+    <div class="detail-stats" id="detail-stats">${detailStatsHtml(station)}</div>
+    <div class="detail-messages-header">
+      <span>Messages</span><span id="detail-msg-count">${msgs.length}</span>
+    </div>
+    <div id="detail-messages">${msgs.length ? msgs.map(messageHtml).join('') : NO_MESSAGES_HTML}</div>
+  `;
+  content.scrollTop = 0;
   panel.classList.remove('hidden');
+}
+
+/** Patch stats in place after a STATION_UPDATE. */
+function updateDetailStats(station) {
+  const row   = document.getElementById('detail-grid-row');
+  const stats = document.getElementById('detail-stats');
+  if (!row || !stats) return renderDetailPanel(station);
+  row.innerHTML   = detailGridHtml(station);
+  stats.innerHTML = detailStatsHtml(station);
+}
+
+/** Insert one message row at `index` (newest-first order) without re-rendering. */
+function insertDetailMessage(station, index) {
+  const list    = document.getElementById('detail-messages');
+  const content = document.getElementById('detail-content');
+  if (!list) return renderDetailPanel(station);
+
+  // If the user has scrolled down, remember the first message row they can see
+  // so it can be held in place after the insert.
+  let anchor = null, anchorTop = 0;
+  if (content.scrollTop > 0) {
+    const viewTop = content.getBoundingClientRect().top;
+    anchor = [...list.children].find(el => el.getBoundingClientRect().bottom > viewTop) || null;
+    if (anchor) anchorTop = anchor.getBoundingClientRect().top;
+  }
+
+  list.querySelector('.no-messages')?.remove();
+  const tpl = document.createElement('template');
+  tpl.innerHTML = messageHtml(station.messages[index]).trim();
+  const row = tpl.content.firstElementChild;
+  list.insertBefore(row, list.children[index] || null);
+  while (list.children.length > maxMessages) list.lastElementChild.remove();
+
+  if (anchor && anchor.isConnected) {
+    content.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+  }
+  document.getElementById('detail-msg-count').textContent = station.messages.length;
 }
 
 document.getElementById('detail-close').addEventListener('click', () => {
@@ -799,7 +867,7 @@ function startMeasure() {
   document.getElementById('measure-result').classList.add('hidden');
   document.getElementById('btn-clear-measure').style.display = '';
   document.getElementById('btn-measure').classList.add('active');
-  document.getElementById('btn-measure').textContent = '&#10005; Cancel';
+  document.getElementById('btn-measure').textContent = '✕ Cancel';
   document.getElementById('btn-measure').setAttribute('aria-pressed', 'true');
   setMeasureHint('Click point 1 of 2 on the map');
 }
@@ -1018,7 +1086,7 @@ function applyTheme(name) {
   if (!THEMES.includes(name)) name = 'dark';
   document.documentElement.dataset.theme = name === 'dark' ? '' : name;
   document.getElementById('theme-select').value = name;
-  localStorage.setItem('js8map-theme', name);
+  try { localStorage.setItem('js8map-theme', name); } catch { /* storage blocked */ }
   // Update Leaflet layers that have inline styles
   updateMapColors();
   redrawGrid();
@@ -1026,7 +1094,9 @@ function applyTheme(name) {
 }
 
 // Restore saved theme on load
-applyTheme(localStorage.getItem('js8map-theme') || 'dark');
+let savedTheme = null;
+try { savedTheme = localStorage.getItem('js8map-theme'); } catch { /* storage blocked */ }
+applyTheme(savedTheme || 'dark');
 
 document.getElementById('theme-select').addEventListener('change', e => {
   applyTheme(e.target.value);
@@ -1076,18 +1146,20 @@ function handleServerMsg(msg) {
     case 'SNAPSHOT': {
       myStation    = msg.myStation || myStation;
       maxMessages  = msg.maxMessages ?? maxMessages;
+      const snap   = msg.stations || [];
 
-      // If the previously selected station is gone from the new snapshot, clear it
-      const snapCallsigns = new Set((msg.stations || []).map(s => s.callsign));
-      if (selectedCall && !snapCallsigns.has(selectedCall)) {
-        selectedCall = null;
-        document.getElementById('detail-panel').classList.add('hidden');
+      // Drop anything the server no longer has (e.g. after a server restart),
+      // except the locally-created home record.
+      const snapCallsigns = new Set(snap.map(s => s.callsign));
+      for (const [cs, st] of stationData) {
+        if (!snapCallsigns.has(cs) && !st.homeOnly) dropStation(cs);
       }
 
-      for (const s of (msg.stations || [])) {
+      for (const s of snap) {
         stationData.set(s.callsign, s);
         placeOrUpdateMarker(s);
       }
+      if (selectedCall && stationData.has(selectedCall)) renderDetailPanel(stationData.get(selectedCall));
 
       updateMyStationUI();
       updateConnectionBadge(msg.connected);
@@ -1104,12 +1176,13 @@ function handleServerMsg(msg) {
     // A station's metadata updated (no messages in this payload)
     case 'STATION_UPDATE': {
       const s    = msg.station;
-      const prev = stationData.get(s.callsign) || { messages: [], firstSeen: Date.now() };
+      const prev = stationData.get(s.callsign) || { messages: [] };
       const next = { ...prev, ...s };
+      delete next.homeOnly;                              // the server knows it now
       stationData.set(s.callsign, next);
-      placeOrUpdateMarker(next, s.callsign === myStation.callsign);
+      placeOrUpdateMarker(next);
       patchSidebarItem(next);                            // surgical DOM update
-      if (selectedCall === s.callsign) renderDetailPanel(next);
+      if (selectedCall === s.callsign) updateDetailStats(next);
       break;
     }
 
@@ -1118,12 +1191,17 @@ function handleServerMsg(msg) {
       const station = stationData.get(msg.callsign);
       if (!station) break;
       station.messages = station.messages || [];
-      station.messages.unshift(msg.message);
+
+      // Keep newest-first order even if an older message arrives late
+      const utc = msg.message.utc || 0;
+      let idx = 0;
+      while (idx < station.messages.length && (station.messages[idx].utc || 0) > utc) idx++;
+      station.messages.splice(idx, 0, msg.message);
       if (station.messages.length > maxMessages) station.messages.length = maxMessages;
+      if (idx >= maxMessages) break;
 
       if (selectedCall === msg.callsign) {
-        // Panel is open — refresh it live
-        renderDetailPanel(station);
+        insertDetailMessage(station, idx);               // panel open — add the row live
       } else {
         // Mark the sidebar item with an unread dot
         newMsgPending.add(msg.callsign);
@@ -1135,16 +1213,9 @@ function handleServerMsg(msg) {
       break;
     }
 
-    // Server removed a station that hasn't been heard in 4 hours
+    // Server removed a station that hasn't been heard within the TTL (default 1 hour)
     case 'STATION_EXPIRED': {
-      const cs = msg.callsign;
-      stationData.delete(cs);
-      newMsgPending.delete(cs);
-      removeMarker(cs);
-      if (selectedCall === cs) {
-        selectedCall = null;
-        document.getElementById('detail-panel').classList.add('hidden');
-      }
+      dropStation(msg.callsign);
       rebuildSidebar();
       break;
     }
@@ -1156,6 +1227,18 @@ function handleServerMsg(msg) {
   }
 }
 
+function dropStation(cs) {
+  stationData.delete(cs);
+  newMsgPending.delete(cs);
+  removeMarker(cs);
+  if (selectedCall === cs) {
+    selectedCall = null;
+    document.getElementById('detail-panel').classList.add('hidden');
+  }
+}
+
+let homeCall = '';   // callsign the home marker was last drawn for
+
 function updateMyStationUI() {
   const badge = document.getElementById('my-callsign-badge');
 
@@ -1166,33 +1249,44 @@ function updateMyStationUI() {
     badge.style.display = 'none';
   }
 
-  if (myStation.grid) {
-    // Ensure the home station has an entry in the data store
-    const homeRecord = stationData.get(myStation.callsign) || {
-      callsign:  myStation.callsign,
-      grid:      myStation.grid,
-      messages:  [],
-      firstSeen: Date.now(),
-    };
-    homeRecord.grid = myStation.grid;
-    stationData.set(myStation.callsign, homeRecord);
-    placeOrUpdateMarker(homeRecord, true);
+  // Callsign changed: remove the old home record (if only we created it) or
+  // restyle it as an ordinary station.
+  if (homeCall && homeCall !== myStation.callsign) {
+    const old = stationData.get(homeCall);
+    if (old && old.homeOnly) dropStation(homeCall);
+    else if (old) placeOrUpdateMarker(old);
+    homeCall = '';
+    scheduleSidebarRebuild();
+  }
 
-    // Centre the map on home once
-    if (!mapCentred) {
-      const pos = gridToLatLon(myStation.grid);
-      if (pos) {
-        map.setView([pos.lat, pos.lon], 6);
-        redrawGrid();
-        mapCentred = true;
-      }
+  if (!myStation.callsign || !myStation.grid) return;
+
+  // Ensure the home station has an entry in the data store
+  let homeRecord = stationData.get(myStation.callsign);
+  if (!homeRecord) {
+    homeRecord = { callsign: myStation.callsign, messages: [], homeOnly: true };
+    stationData.set(myStation.callsign, homeRecord);
+    scheduleSidebarRebuild();
+  }
+  homeRecord.grid = myStation.grid;
+  homeCall = myStation.callsign;
+  placeOrUpdateMarker(homeRecord);
+  if (posGroups.has(markerPosKey.get(homeCall))) relayoutGroup(markerPosKey.get(homeCall));
+
+  // Centre the map on home once
+  if (!mapCentred) {
+    const pos = gridToLatLon(myStation.grid);
+    if (pos) {
+      map.setView([pos.lat, pos.lon], 6);
+      redrawGrid();
+      mapCentred = true;
     }
   }
 }
 
 function updateConnectionBadge(connected) {
   const el = document.getElementById('connection-status');
-  el.textContent = connected ? '&#9679; Connected to JS8CALL' : '&#9679; Disconnected';
+  el.textContent = connected ? '● Connected to JS8CALL' : '● Disconnected';
   el.className   = connected ? 'connected' : 'disconnected';
 }
 

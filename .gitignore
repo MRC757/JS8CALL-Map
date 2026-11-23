@@ -3,6 +3,8 @@ node_modules/
 
 # ── Build output ─────────────────────────────────────────────────────────────
 dist/
+# Release archives belong on GitHub Releases, not in git history
+*.zip
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 *.log
@@ -22,3 +24,6 @@ desktop.ini
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
 .env.local
+
+# ── Local configuration ───────────────────────────────────────────────────────
+config.json

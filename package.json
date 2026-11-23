@@ -6,31 +6,38 @@
   "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "package": "pkg . --targets node18-win-x64 --output dist/js8call-map.exe"
+    "test": "node --test \"test/*.test.js\"",
+    "package": "pkg . --targets node22-win-x64 --output dist/js8call-map.exe"
   },
   "pkg": {
     "assets": [
       "public/index.html",
       "public/app.js",
+      "public/grid.js",
       "public/style.css",
-      "node_modules/leaflet/dist/**",
-      "node_modules/world-atlas/**",
-      "node_modules/topojson-client/dist/**",
-      "node_modules/us-atlas/counties-10m.json",
       "public/data/interstates.geojson",
-      "public/data/county_names.json"
+      "public/data/county_names.json",
+      "node_modules/leaflet/dist/leaflet.js",
+      "node_modules/leaflet/dist/leaflet.css",
+      "node_modules/leaflet/dist/images/*.png",
+      "node_modules/topojson-client/dist/topojson-client.min.js",
+      "node_modules/world-atlas/countries-110m.json",
+      "node_modules/us-atlas/counties-10m.json"
     ],
     "outputPath": "dist"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "leaflet": "^1.9.4",
-    "topojson-client": "^3.1.0",
-    "us-atlas": "^3.0.1",
-    "world-atlas": "^2.0.2",
     "ws": "^8.14.2"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "@yao-pkg/pkg": "^6.26.0",
+    "leaflet": "^1.9.4",
+    "topojson-client": "^3.1.0",
+    "us-atlas": "^3.0.1",
+    "world-atlas": "^2.0.2"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

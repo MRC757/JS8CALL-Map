@@ -1,4 +1,4 @@
 @echo off
-start "" "%~dp0js8call-map.exe"
-timeout /t 3 /nobreak >nul
-start "" "http://localhost:8181"
+rem js8call-map.exe opens your browser itself once the server is ready.
+rem This file is kept so existing desktop shortcuts keep working.
+start "" "%~dp0js8call-map.exe" %*

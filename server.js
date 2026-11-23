@@ -7,58 +7,50 @@ const WebSocket = require('ws');
 const path      = require('path');
 const fs        = require('fs');
 
-// ─── Configuration ────────────────────────────────────────────────────────────
-const JS8CALL_HOST     = '127.0.0.1';
-const JS8CALL_PORT     = 2237;
-const WEB_PORT         = 8181;
-const POLL_INTERVAL    = 30_000;               // ms between activity polls
-const MAX_MESSAGES     = 100;                  // messages kept per station
-const STATION_TTL      = 1 * 60 * 60 * 1000;  // 1 hour — then station is removed
-const CLEANUP_INTERVAL = 60_000;               // run expiry check every minute
-const CALLSIGN_RE      = /^[A-Z0-9/]{2,12}$/; // basic sanity check on callsigns
-const MAX_MSG_TEXT     = 500;                  // characters kept per message text
+const { loadConfig, HELP }                              = require('./lib/config');
+const { createStationStore }                            = require('./lib/station-store');
+const { isResponseTo, isAllowedOrigin, LineSplitter }   = require('./lib/net-utils');
+const { browserUrl, openBrowser }                       = require('./lib/open-browser');
+const { ASSETS, assetPath }                             = require('./lib/assets');
 
-// ─── Station Store ────────────────────────────────────────────────────────────
-// Map<callsign, { callsign, grid, snr, freq, offset, utc, lastHeard, firstSeen, messages[] }>
-const stations       = new Map();
-let   myStation      = { callsign: '', grid: '' };
-let   js8callConnected = false;
+// ─── Configuration ────────────────────────────────────────────────────────────
+let config;
+try { config = loadConfig(); }
+catch (err) { console.error(`\n${err.message}\n\n${HELP}\n`); process.exit(1); }
+if (config.help) { console.log(HELP); process.exit(0); }
+
+const POLL_INTERVAL    = config.pollSeconds * 1000;
+const CLEANUP_INTERVAL = 60_000;
+const QUERY_TIMEOUT    = 5_000;
 
 // ─── HTTP + WebSocket Server ──────────────────────────────────────────────────
 const app = express();
 
-// Serve the web UI — use readFileSync so assets work inside the pkg bundle
-const PUBLIC = path.join(__dirname, 'public');
-app.get('/',          (_req, res) => res.type('html').send(fs.readFileSync(path.join(PUBLIC, 'index.html'))));
-app.get('/app.js',    (_req, res) => res.type('js').send(fs.readFileSync(path.join(PUBLIC, 'app.js'))));
-app.get('/style.css', (_req, res) => res.type('css').send(fs.readFileSync(path.join(PUBLIC, 'style.css'))));
-
-// Serve Leaflet from node_modules so the app works fully offline
-app.use('/leaflet',      express.static(path.join(__dirname, 'node_modules/leaflet/dist')));
-// Serve world map data and TopoJSON client for fully offline basemap
-app.use('/world-atlas',  express.static(path.join(__dirname, 'node_modules/world-atlas')));
-app.use('/topojson',     express.static(path.join(__dirname, 'node_modules/topojson-client/dist')));
-// Serve US state/county atlas data for offline US overlay
-app.use('/us-atlas',     express.static(path.join(__dirname, 'node_modules/us-atlas')));
-// Serve bundled data files
-app.get('/data/interstates.geojson',  (_req, res) => res.type('json').send(fs.readFileSync(path.join(PUBLIC, 'data/interstates.geojson'))));
-app.get('/data/county_names.json',    (_req, res) => res.type('json').send(fs.readFileSync(path.join(PUBLIC, 'data/county_names.json'))));
+// Every browser file is read into memory once at startup (this also works
+// inside the pkg bundle, and a missing file fails immediately, not on first use).
+for (const [route, rel] of Object.entries(ASSETS)) {
+  const body = fs.readFileSync(assetPath(rel));
+  const type = route === '/' ? 'html' : path.extname(rel);
+  app.get(route, (_req, res) => res.type(type).send(body));
+}
 
 const httpServer = http.createServer(app);
-const wss = new WebSocket.Server({ server: httpServer });
+const wss = new WebSocket.Server({
+  server: httpServer,
+  verifyClient: ({ origin, req }) => isAllowedOrigin(origin, req.headers.host),
+});
 
-// Friendly error if the port is already taken
 httpServer.on('error', err => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`\nError: Port ${WEB_PORT} is already in use.`);
-    console.error(`Edit WEB_PORT at the top of server.js to use a different port.\n`);
+    console.error(`\nError: Port ${config.webPort} is already in use.`);
+    console.error('Start with a different port, e.g.  js8call-map --port 8282');
+    console.error('or put { "webPort": 8282 } in config.json next to the program.\n');
   } else {
     console.error('HTTP server error:', err.message);
   }
   process.exit(1);
 });
 
-// Prevent unhandled WebSocket server errors from crashing the process
 wss.on('error', err => console.error('WebSocket server error:', err.message));
 
 function broadcast(payload) {
@@ -68,308 +60,87 @@ function broadcast(payload) {
   }
 }
 
-// Send a full state snapshot to each new browser tab
+// ─── Station Store ────────────────────────────────────────────────────────────
+const store = createStationStore({
+  broadcast,
+  ttl:         config.ttlMinutes * 60 * 1000,
+  maxMessages: config.maxMessages,
+});
+let js8callConnected = false;
+
 wss.on('connection', ws => {
   ws.on('error', err => console.error('WebSocket client error:', err.message));
-
-  ws.send(JSON.stringify({
-    type:        'SNAPSHOT',
-    stations:    [...stations.values()],
-    myStation,
-    connected:   js8callConnected,
-    maxMessages: MAX_MESSAGES,
-  }));
+  ws.send(JSON.stringify({ type: 'SNAPSHOT', ...store.snapshot(), connected: js8callConnected }));
 });
 
-// ─── Station Expiry ───────────────────────────────────────────────────────────
 const cleanupTimer = setInterval(() => {
-  const cutoff = Date.now() - STATION_TTL;
-  for (const [callsign, station] of stations) {
-    if ((station.lastHeard || station.firstSeen || 0) < cutoff) {
-      stations.delete(callsign);
-      broadcast({ type: 'STATION_EXPIRED', callsign });
-      console.log(`Expired: ${callsign}`);
-    }
-  }
+  for (const cs of store.expire()) console.log(`Expired: ${cs}`);
 }, CLEANUP_INTERVAL);
 
 // ─── JS8CALL TCP Client ───────────────────────────────────────────────────────
-// JS8CALL uses the persistent TCP connection as a one-way event stream.
-// Writing to it causes JS8CALL to close the connection.  Queries therefore use
-// short-lived connections: connect → write one command → read response → done.
+// The persistent connection is used only as an event stream. Queries use
+// short-lived connections: connect → write one command → read the reply → close.
 
 let socket    = null;
-let rxBuffer  = '';
 let pollTimer = null;
+let queryId   = Date.now();
 
-/**
- * Send a single command to JS8CALL and resolve with the first JSON response.
- * Opens and closes its own connection so the event-listener socket is never written to.
- */
-function queryJS8Call(type, value = '', extra = {}) {
+/** Send one command to JS8CALL and resolve with its matching reply. */
+function queryJS8Call(type, value = '') {
   return new Promise((resolve, reject) => {
-    const conn = new net.Socket();
-    let buf = '';
-    const deadline = setTimeout(() => {
-      conn.removeAllListeners();
-      conn.destroy();
-      reject(new Error('timeout'));
-    }, 5_000);
+    const id       = ++queryId;
+    const conn     = new net.Socket();
+    const splitter = new LineSplitter();
+    let   settled  = false;
 
-    conn.connect(JS8CALL_PORT, JS8CALL_HOST, () => {
-      const packet = JSON.stringify({ type, value, params: { _ID: Date.now(), ...extra } });
-      conn.write(packet + '\n');
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      conn.removeAllListeners();
+      conn.on('error', () => {});
+      conn.destroy();
+      err ? reject(err) : resolve(result);
+    };
+    const deadline = setTimeout(() => finish(new Error('timeout')), QUERY_TIMEOUT);
+
+    conn.connect(config.js8Port, config.js8Host, () => {
+      conn.write(JSON.stringify({ type, value, params: { _ID: id } }) + '\n');
     });
 
     conn.on('data', chunk => {
-      buf += chunk.toString('utf8');
-      const lines = buf.split(/\r?\n/);
-      buf = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const parsed = JSON.parse(trimmed);
-          clearTimeout(deadline);
-          conn.removeAllListeners('close');
-          conn.destroy();
-          resolve(parsed);
-        } catch (_) {}
-        return;
+      for (const line of splitter.push(chunk)) {
+        let parsed;
+        try { parsed = JSON.parse(line); } catch { continue; }
+        // Live events can arrive on this socket before the reply — skip them.
+        if (isResponseTo(parsed, type, id)) return finish(null, parsed);
       }
     });
 
-    conn.on('error', err => { clearTimeout(deadline); reject(err); });
-    conn.on('close', () => { clearTimeout(deadline); reject(new Error('closed')); });
+    conn.on('error', err => finish(err));
+    conn.on('close', () => finish(new Error('closed')));
   });
 }
 
 async function pollJS8Call() {
   if (!js8callConnected) return;
-
-  const query = async (type) => {
-    try { return await queryJS8Call(type); }
-    catch (err) {
+  const queries = ['STATION.GET_CALLSIGN', 'STATION.GET_GRID', 'RX.GET_CALL_ACTIVITY', 'RX.GET_BAND_ACTIVITY'];
+  for (const type of queries) {
+    try {
+      store.processMessage(await queryJS8Call(type));
+    } catch (err) {
       if (err.message !== 'timeout' && err.message !== 'closed') {
         console.debug(`Poll ${type} failed: ${err.message}`);
       }
-      return null;
     }
-  };
-
-  const cs = await query('STATION.GET_CALLSIGN');
-  if (cs?.value) {
-    myStation.callsign = cs.value.trim().toUpperCase();
-    broadcast({ type: 'MY_STATION', myStation });
-  }
-
-  const grid = await query('STATION.GET_GRID');
-  if (grid?.value) {
-    myStation.grid = grid.value.trim().toUpperCase();
-    broadcast({ type: 'MY_STATION', myStation });
-  }
-
-  const callActivity = await query('RX.GET_CALL_ACTIVITY');
-  if (callActivity) processMessage(JSON.stringify(callActivity));
-
-  const bandActivity = await query('RX.GET_BAND_ACTIVITY');
-  if (bandActivity) processMessage(JSON.stringify(bandActivity));
-}
-
-// ─── Message Processing ───────────────────────────────────────────────────────
-function processMessage(raw) {
-  let msg;
-  try { msg = JSON.parse(raw); } catch (e) {
-    console.debug('JS8CALL parse error:', e.message, '| raw:', raw.slice(0, 80));
-    return;
-  }
-
-  const { type, value = '', params = {} } = msg;
-
-  switch (type) {
-
-    case 'STATION.CALLSIGN':
-      myStation.callsign = value.trim().toUpperCase();
-      broadcast({ type: 'MY_STATION', myStation });
-      break;
-
-    case 'STATION.GRID':
-      myStation.grid = value.trim().toUpperCase();
-      broadcast({ type: 'MY_STATION', myStation });
-      break;
-
-    case 'RX.SPOT': {
-      const callsign = clean(params.FROM || params.CALLSIGN);
-      if (!callsign) break;
-      touchStation(callsign, stationUpdate(params));
-      break;
-    }
-
-    case 'RX.DIRECTED': {
-      const from = clean(params.FROM);
-      if (!from) break;
-      const text = (params.TEXT || value || '').trim();
-      const update = stationUpdate(params);
-      const grid = gridFromText(text);
-      if (grid) update.grid = grid;
-      touchStation(from, update);
-      if (text) pushMessage(from, {
-        from, to: clean(params.TO),
-        text, utc: params.UTC ?? Date.now(), kind: 'directed',
-      });
-      break;
-    }
-
-    case 'RX.ACTIVITY': {
-      const from = clean(params.FROM || params.CALLSIGN);
-      if (!from) break;
-      const text = (params.TEXT || value || '').trim();
-      const update = stationUpdate(params);
-      const grid = gridFromText(text);
-      if (grid) update.grid = grid;
-      touchStation(from, update);
-      if (text) pushMessage(from, {
-        from, to: clean(params.TO),
-        text, utc: params.UTC ?? Date.now(), kind: 'activity',
-      });
-      break;
-    }
-
-    case 'RX.CALL_ACTIVITY': {
-      const activity = params.CALL_ACTIVITY || {};
-      for (const [cs, info] of Object.entries(activity)) {
-        const callsign = clean(cs);
-        if (!callsign) continue;
-        touchStation(callsign, {
-          grid:   clean(info.GRID),
-          snr:    toNum(info.SNR),
-          freq:   toNum(info.DIAL ?? info.FREQ),
-          offset: toNum(info.OFFSET),
-          utc:    info.UTC ?? Date.now(),
-        });
-        const text = (info.TEXT || '').trim();
-        const grid = gridFromText(text);
-        if (grid) touchStation(callsign, { grid });
-        if (text) pushMessage(callsign, {
-          from: callsign, to: '', text, utc: info.UTC ?? Date.now(), kind: 'activity',
-        });
-      }
-      break;
-    }
-
-    case 'RX.BAND_ACTIVITY': {
-      const activity = params.BAND_ACTIVITY || {};
-      for (const info of Object.values(activity)) {
-        if (!info.TEXT) continue;
-        const m = info.TEXT.match(/^([A-Z0-9/]{2,12})\s/);
-        if (!m) continue;
-        const cs = m[1];
-        const text = info.TEXT.trim();
-        const update = {
-          snr:  toNum(info.SNR),
-          freq: toNum(info.DIAL ?? info.FREQ),
-          utc:  info.UTC ?? Date.now(),
-        };
-        const grid = gridFromText(text);
-        if (grid) update.grid = grid;
-        touchStation(cs, update);
-        pushMessage(cs, {
-          from: cs, to: '', text,
-          utc: info.UTC ?? Date.now(), kind: 'band',
-        });
-      }
-      break;
-    }
-
-    case 'CLOSE':
-      console.log('JS8CALL sent CLOSE');
-      break;
   }
 }
 
-function clean(v) {
-  return String(v || '').trim().toUpperCase();
-}
-
-/**
- * Extract a Maidenhead grid locator from free-form message text.
- * Matches "GRID FM16RS" or "GRID FM16" patterns (case-insensitive).
- * Returns the locator in uppercase, or null if none found.
- */
-function gridFromText(text) {
-  const m = String(text || '').match(/\bGRID\s+([A-R]{2}[0-9]{2}(?:[A-X]{2})?)\b/i);
-  return m ? m[1].toUpperCase() : null;
-}
-
-function toNum(v) {
-  if (v === undefined || v === null || v === '') return undefined;
-  const n = Number(v);
-  return isNaN(n) ? undefined : n;
-}
-
-function toFreq(v) {
-  const n = toNum(v);
-  // HF range 1–30 MHz; JS8CALL reports in Hz so allow up to 30 000 000
-  return (n !== undefined && n >= 1_000_000 && n <= 30_000_000) ? n : undefined;
-}
-
-function toOffset(v) {
-  const n = toNum(v);
-  // Audio offset within a ~3 kHz SSB passband
-  return (n !== undefined && n >= 0 && n <= 4_000) ? n : undefined;
-}
-
-/** Build a station-update object from a raw JS8CALL params block. */
-function stationUpdate(params) {
-  return {
-    grid:   clean(params.GRID),
-    snr:    toNum(params.SNR),
-    freq:   toFreq(params.DIAL ?? params.FREQ),
-    offset: toOffset(params.OFFSET),
-    utc:    params.UTC ?? Date.now(),
-  };
-}
-
-function touchStation(callsign, update) {
-  // Reject blank or malformed callsigns before they enter the store
-  if (!callsign || !CALLSIGN_RE.test(callsign)) return;
-
-  const prev = stations.get(callsign) || { callsign, messages: [], firstSeen: Date.now() };
-  const next = { ...prev, lastHeard: Date.now() };
-
-  if (update.grid)               next.grid   = update.grid;
-  if (update.snr  !== undefined) next.snr    = update.snr;
-  if (update.freq !== undefined) next.freq   = update.freq;
-  if (update.offset !== undefined) next.offset = update.offset;
-  if (update.utc)                next.utc    = update.utc;
-
-  stations.set(callsign, next);
-
-  // Broadcast station data without the messages array (keeps payloads small)
-  const { messages: _msgs, ...stationData } = next;
-  broadcast({ type: 'STATION_UPDATE', station: stationData });
-}
-
-function pushMessage(callsign, msg) {
-  if (!callsign || !CALLSIGN_RE.test(callsign)) return;
-  // Create a stub if the station hasn't been spotted yet so the message isn't lost.
-  if (!stations.has(callsign)) {
-    stations.set(callsign, { callsign, messages: [], firstSeen: Date.now(), lastHeard: Date.now() });
-  }
-  const station = stations.get(callsign);
-  if (msg.text && msg.text.length > MAX_MSG_TEXT) msg.text = msg.text.slice(0, MAX_MSG_TEXT) + '…';
-  station.messages.unshift(msg);
-  if (station.messages.length > MAX_MESSAGES) station.messages.length = MAX_MESSAGES;
-  broadcast({ type: 'NEW_MESSAGE', callsign, message: msg });
-}
-
-// ─── TCP Connection Management ────────────────────────────────────────────────
 function connectToJS8Call() {
-  console.log(`Connecting to JS8CALL at ${JS8CALL_HOST}:${JS8CALL_PORT}…`);
-  socket   = new net.Socket();
-  rxBuffer = '';
+  console.log(`Connecting to JS8CALL at ${config.js8Host}:${config.js8Port}…`);
+  socket = new net.Socket();
+  const splitter = new LineSplitter();
 
-  // Abort the attempt if JS8CALL doesn't respond within 15 seconds
   const connectTimeout = setTimeout(() => {
     if (!js8callConnected) {
       console.error('JS8CALL connection attempt timed out — retrying…');
@@ -377,31 +148,22 @@ function connectToJS8Call() {
     }
   }, 15_000);
 
-  socket.connect(JS8CALL_PORT, JS8CALL_HOST, () => {
+  socket.connect(config.js8Port, config.js8Host, () => {
     clearTimeout(connectTimeout);
     console.log('✓  JS8CALL connected');
     js8callConnected = true;
     broadcast({ type: 'CONNECTION_STATUS', connected: true });
-    // Queries use separate short-lived connections; this socket only listens.
     pollJS8Call();
     pollTimer = setInterval(pollJS8Call, POLL_INTERVAL);
   });
 
   socket.on('data', chunk => {
-    rxBuffer += chunk.toString('utf8');
-
-    // Guard against memory exhaustion if JS8CALL sends data without newlines
-    if (rxBuffer.length > 1_000_000) {
-      console.warn('JS8CALL rx buffer exceeded 1 MB — discarding to prevent memory leak');
-      rxBuffer = '';
-      return;
+    for (const line of splitter.push(chunk)) {
+      if (!store.processMessage(line) && line.includes('"CLOSE"')) console.log('JS8CALL sent CLOSE');
     }
-
-    const lines = rxBuffer.split(/\r?\n/);
-    rxBuffer = lines.pop();   // keep incomplete trailing fragment
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed) processMessage(trimmed);
+    if (splitter.overflowed) {
+      console.warn('JS8CALL rx buffer exceeded 1 MB — discarded');
+      splitter.overflowed = false;
     }
   });
 
@@ -413,9 +175,7 @@ function connectToJS8Call() {
 
   socket.on('close', () => {
     clearTimeout(connectTimeout);
-    if (js8callConnected) {
-      console.log('JS8CALL disconnected – retrying in 5 s…');
-    }
+    if (js8callConnected) console.log('JS8CALL disconnected – retrying in 5 s…');
     js8callConnected = false;
     clearInterval(pollTimer);
     broadcast({ type: 'CONNECTION_STATUS', connected: false });
@@ -428,14 +188,14 @@ function shutdown(signal) {
   console.log(`\n${signal} received — shutting down…`);
   clearInterval(cleanupTimer);
   clearInterval(pollTimer);
-  if (socket) socket.destroy();
+  if (socket) { socket.removeAllListeners('close'); socket.destroy(); }
+  for (const client of wss.clients) client.terminate();
   wss.close(() => {
     httpServer.close(() => {
       console.log('Shutdown complete.');
       process.exit(0);
     });
   });
-  // Force exit after 3 s if graceful close stalls
   setTimeout(() => process.exit(1), 3_000).unref();
 }
 
@@ -443,7 +203,15 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-httpServer.listen(WEB_PORT, () => {
-  console.log(`Web interface → http://localhost:${WEB_PORT}`);
+// The browser is opened only after listen() succeeds, so it always gets the
+// address and port actually in use (and never opens if the port is taken).
+httpServer.listen(config.webPort, config.webHost, () => {
+  const url = browserUrl(config.webHost, config.webPort);
+  console.log(`Web interface → ${url}`);
+  if (config.webHost === '0.0.0.0' || config.webHost === '::') console.log('(listening on all network interfaces)');
+  if (config.openBrowser) {
+    console.log('Opening your web browser… (start with --no-open to skip this)');
+    openBrowser(url);
+  }
   connectToJS8Call();
 });

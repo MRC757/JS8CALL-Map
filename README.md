@@ -119,7 +119,7 @@ the addresses to use instead.
 Settings are read from `/etc/js8call-map/config.json` (system-wide), then
 `~/.config/js8call-map/config.json` (per user, wins), then environment variables
 and command-line options. `js8call-map --config <file>` uses one specific file.
-See [Configuration](#configuration) for the options.
+See [Configuration](#configuration) for the options, or `man js8call-map` once installed.
 
 ### Updating and removing
 
@@ -265,7 +265,7 @@ The `.deb` builder ([`scripts/build-deb.js`](scripts/build-deb.js)) is plain Nod
 packages can be assembled on any OS. Build the binaries on Linux itself (as the
 release workflow does): pkg can cross-build them from Windows, but a native build is
 the one that's tested. The package installs the binary to `/usr/bin`, a menu entry
-and icon, a systemd user service, and docs; its contents live in
+and icon, a systemd user service, a man page (`man js8call-map`), and docs; its contents live in
 [`packaging/linux/`](packaging/linux/). Set `DEB_MAINTAINER` to change the
 `Maintainer:` field.
 

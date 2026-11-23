@@ -83,6 +83,18 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq lintian desktop-file-utils > /dev/null
           lintian --info --no-tag-display-limit "$DEB" || true
           desktop-file-validate packaging/linux/js8call-map.desktop
+      - name: Man page renders cleanly; fixed lintian warnings stay fixed
+        run: |
+          set -e
+          sudo apt-get install -y -qq man-db lintian > /dev/null
+          mkdir -p extracted && dpkg-deb -x "$DEB" extracted
+          # Any roff warning fails the step
+          warnings=$(man --warnings -E UTF-8 -l extracted/usr/share/man/man1/js8call-map.1.gz 2>&1 > /dev/null)
+          if [ -n "$warnings" ]; then echo "$warnings"; exit 1; fi
+          man -P cat -l extracted/usr/share/man/man1/js8call-map.1.gz | head -5
+          lintian "$DEB" > lintian.txt 2>&1 || true
+          cat lintian.txt
+          if grep -E "wrong-name-for-changelog|no-manual-page|manpage-has" lintian.txt; then exit 1; fi
       - name: Install
         run: sudo apt-get install -y "./$DEB"
       - name: Run the installed app

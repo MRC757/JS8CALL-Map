@@ -86,7 +86,8 @@ test('installs the binary, menu entry, icon, user service and docs with Debian p
     './usr/lib/systemd/user/js8call-map.service':              0o644,
     './usr/share/doc/js8call-map/copyright':                   0o644,
     './usr/share/doc/js8call-map/README.Debian':               0o644,
-    './usr/share/doc/js8call-map/changelog.Debian.gz':         0o644,
+    './usr/share/doc/js8call-map/changelog.gz':                0o644,
+    './usr/share/man/man1/js8call-map.1.gz':                   0o644,
   };
   for (const [name, mode] of Object.entries(expected)) {
     const e = file(data, name);
@@ -134,8 +135,27 @@ test('desktop entry and service point at the installed binary', () => {
   const service = file(data, './usr/lib/systemd/user/js8call-map.service').data.toString();
   assert.match(service, /^ExecStart=\/usr\/bin\/js8call-map --no-open$/m);
   assert.match(service, /^WantedBy=default\.target$/m);
-  const changelog = zlib.gunzipSync(file(data, './usr/share/doc/js8call-map/changelog.Debian.gz').data).toString();
+  const changelog = zlib.gunzipSync(file(data, './usr/share/doc/js8call-map/changelog.gz').data).toString();
   assert.match(changelog, /^js8call-map \(1\.3\.0\) /);
+});
+
+test('man page is installed and documents every option and environment variable', () => {
+  const { data, file } = unpack(build());
+  assert.equal(file(data, './usr/share/doc/js8call-map/changelog.Debian.gz'), undefined,
+    'native package uses changelog.gz (lintian: wrong-name-for-changelog-of-native-package)');
+  const man = zlib.gunzipSync(file(data, './usr/share/man/man1/js8call-map.1.gz').data).toString();
+  assert.match(man, /^\.TH JS8CALL\\-MAP 1 /);
+  for (const section of ['NAME', 'SYNOPSIS', 'DESCRIPTION', 'OPTIONS', 'FILES', 'ENVIRONMENT']) {
+    assert.match(man, new RegExp(`^\\.SH ${section}$`, 'm'), `section ${section}`);
+  }
+  const plain = man.replace(/\\-/g, '-');   // roff writes option dashes as \-
+  const { HELP } = require('../lib/config');
+  for (const flag of new Set(HELP.match(/--[a-z0-9-]+/g))) {
+    assert.ok(plain.includes(flag), `man page documents ${flag}`);
+  }
+  for (const env of new Set(require('fs').readFileSync(require.resolve('../lib/config'), 'utf8').match(/JS8MAP_[A-Z0-9_]+/g))) {
+    assert.ok(plain.includes(env), `man page documents ${env}`);
+  }
 });
 
 test('packaging files use LF line endings (systemd and desktop entries reject CRLF)', () => {

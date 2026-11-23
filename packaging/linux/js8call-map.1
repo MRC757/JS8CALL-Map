@@ -1,0 +1,109 @@
+.TH JS8CALL\-MAP 1 "2026" "js8call-map" "User Commands"
+.SH NAME
+js8call-map \- live Maidenhead grid map of stations heard by JS8CALL
+.SH SYNOPSIS
+.B js8call-map
+[\fIoptions\fR]
+.SH DESCRIPTION
+.B js8call-map
+connects to the TCP API of a running JS8CALL and shows the stations it hears
+on an offline map in your web browser: signal reports, message history, who is
+hearing you, day/night and greyline overlays, and distance and bearing tools.
+.PP
+In JS8CALL, enable the TCP server (File > Settings > Reporting, port 2237) and
+set Max TCP Connections to 3.
+.PP
+By default the map is served at http://localhost:8181/ and opened in your
+browser when a desktop session is available. With no desktop (an SSH login, a
+headless Raspberry Pi or a systemd service) no browser is opened; browse to the
+address it prints instead.
+.SH OPTIONS
+.TP
+.BI \-\-host " addr"
+Web interface address (default 127.0.0.1). Use 0.0.0.0 to reach the map from
+other devices on your network.
+.TP
+.BI \-\-port " n"
+Web interface port (default 8181).
+.TP
+.BI \-\-js8\-host " addr"
+JS8CALL TCP API host (default 127.0.0.1).
+.TP
+.BI \-\-js8\-port " n"
+JS8CALL TCP API port (default 2237).
+.TP
+.BI \-\-poll\-seconds " n"
+How often to poll JS8CALL for activity (default 30).
+.TP
+.BI \-\-ttl\-minutes " n"
+Remove stations not heard for this long (default 60).
+.TP
+.BI \-\-max\-messages " n"
+Messages kept per station (default 100).
+.TP
+.BR \-\-open ", " \-\-no\-open
+Open, or don't open, the map in your web browser at startup. On by default for
+the installed program when a desktop is available.
+.TP
+.BI \-\-config " file"
+Read settings from this file instead of the usual locations.
+.TP
+.BI \-\-record " file"
+Save the raw JS8CALL traffic to
+.I file
+(JSON Lines) for testing and troubleshooting. Stops at 100 MB.
+.TP
+.BR \-h ", " \-\-help
+Show a summary of the options.
+.SH FILES
+.TP
+.I /etc/js8call\-map/config.json
+System-wide settings.
+.TP
+.I ~/.config/js8call\-map/config.json
+Per-user settings; these override the system-wide file. For example:
+.RS
+.EX
+{ "webHost": "0.0.0.0", "webPort": 8181 }
+.EE
+.RE
+.TP
+.I /usr/lib/systemd/user/js8call\-map.service
+systemd user service for running the map without a desktop.
+.SH ENVIRONMENT
+Each option can also be set with an environment variable:
+.BR JS8MAP_HOST ,
+.BR JS8MAP_PORT ,
+.BR JS8MAP_JS8_HOST ,
+.BR JS8MAP_JS8_PORT ,
+.BR JS8MAP_POLL_SECONDS ,
+.BR JS8MAP_TTL_MINUTES ,
+.BR JS8MAP_MAX_MESSAGES ,
+.BR JS8MAP_OPEN ,
+.BR JS8MAP_RECORD .
+Command-line options override environment variables, which override the
+configuration files.
+.SH EXAMPLES
+Run headless on a Raspberry Pi and view it from other devices:
+.PP
+.RS
+.EX
+mkdir \-p ~/.config/js8call\-map
+echo \(aq{ "webHost": "0.0.0.0" }\(aq > ~/.config/js8call\-map/config.json
+systemctl \-\-user enable \-\-now js8call\-map
+sudo loginctl enable\-linger $USER
+.EE
+.RE
+.PP
+Record a session for testing:
+.PP
+.RS
+.EX
+js8call\-map \-\-record session.jsonl
+.EE
+.RE
+.SH SEE ALSO
+.BR js8call (1),
+.BR systemctl (1)
+.PP
+https://github.com/MRC757/JS8CALL\-Map

@@ -96,6 +96,8 @@ function ar(members, mtime) {
 // ── package contents ──────────────────────────────────────────────────────────
 
 const read = f => fs.readFileSync(path.join(LINUX, f));
+// gzip -9n equivalent: Node writes no file name and a zero timestamp, so output is reproducible
+const gz   = data => zlib.gzipSync(data, { level: 9 });
 
 function changelog(version, maintainer, date) {
   return `js8call-map (${version}) stable; urgency=medium\n\n` +
@@ -112,8 +114,9 @@ function payload({ binary, version, maintainer, date }) {
     '/usr/lib/systemd/user/js8call-map.service':              { data: read('js8call-map.service'), mode: 0o644 },
     '/usr/share/doc/js8call-map/copyright':                   { data: read('copyright'), mode: 0o644 },
     '/usr/share/doc/js8call-map/README.Debian':               { data: read('README.Debian'), mode: 0o644 },
-    '/usr/share/doc/js8call-map/changelog.Debian.gz':
-      { data: zlib.gzipSync(changelog(version, maintainer, date), { level: 9 }), mode: 0o644 },
+    // A native package (version without a -revision) uses changelog.gz, not changelog.Debian.gz
+    '/usr/share/doc/js8call-map/changelog.gz':                { data: gz(changelog(version, maintainer, date)), mode: 0o644 },
+    '/usr/share/man/man1/js8call-map.1.gz':                   { data: gz(read('js8call-map.1')), mode: 0o644 },
   };
 }
 

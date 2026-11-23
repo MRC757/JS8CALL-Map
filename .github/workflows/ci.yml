@@ -12,6 +12,7 @@ jobs:
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -28,6 +29,7 @@ jobs:
   browser:
     name: Browser tests
     runs-on: ubuntu-latest   # Google Chrome is preinstalled on GitHub's Ubuntu runners
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,6 +54,7 @@ jobs:
   linux-package:
     name: Debian package (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

@@ -38,36 +38,61 @@ function findBrowser() {
  * Launch a headless browser and return a page handle:
  *   { navigate(url), eval(expr), errors, screenshot(file), close() }
  */
-async function launchPage(executable, { width = 1400, height = 900, scale = 2 } = {}) {
+/** Wait for a child process to exit; force-kill it if it hasn't after `ms`. */
+async function stopProcess(proc, ms = 5000) {
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
+  const exited = new Promise(r => proc.once('exit', r));
+  proc.kill();
+  const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* gone */ } }, ms);
+  await exited;
+  clearTimeout(timer);
+}
+
+function removeProfile(profile) {
+  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* still locked on Windows */ }
+}
+
+async function launchPage(executable, { width = 1400, height = 900, scale = 2, startTimeout = 60_000, commandTimeout = 30_000 } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-cdp-'));
   const args = ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
                 `--window-size=${width},${height}`, `--force-device-scale-factor=${scale}`,
                 '--no-first-run', '--no-default-browser-check', 'about:blank'];
-  if (process.env.CI) args.push('--no-sandbox');   // CI containers lack the user namespaces the sandbox needs
+  if (process.env.CI) args.push('--no-sandbox', '--disable-dev-shm-usage');   // CI containers: no user namespaces, small /dev/shm
   const proc = spawn(executable, args, { stdio: ['ignore', 'ignore', 'pipe'] });
 
-  // Chrome prints "DevTools listening on ws://…" to stderr
-  const browserWs = await new Promise((resolve, reject) => {
-    let err = '';
-    const timer = setTimeout(() => reject(new Error('browser did not start:\n' + err)), 20_000);
-    proc.stderr.on('data', d => {
-      err += d;
-      const m = err.match(/DevTools listening on (ws:\/\/\S+)/);
-      if (m) { clearTimeout(timer); resolve(m[1]); }
+  let cdp;
+  try {
+    // Chrome prints "DevTools listening on ws://…" to stderr. A cold start on a
+    // fresh CI machine can take well over 20 s.
+    const browserWs = await new Promise((resolve, reject) => {
+      let err = '';
+      const timer = setTimeout(() => reject(new Error(`browser did not start within ${startTimeout / 1000} s:\n${err}`)), startTimeout);
+      proc.stderr.on('data', d => {
+        err += d;
+        const m = err.match(/DevTools listening on (ws:\/\/\S+)/);
+        if (m) { clearTimeout(timer); resolve(m[1]); }
+      });
+      proc.on('exit', code => { clearTimeout(timer); reject(new Error(`browser exited (${code}):\n${err}`)); });
     });
-    proc.on('exit', code => { clearTimeout(timer); reject(new Error(`browser exited (${code}):\n${err}`)); });
-  });
-  const port = new URL(browserWs).port;
+    const port = new URL(browserWs).port;
 
-  let target;
-  for (let i = 0; i < 50 && !target; i++) {
-    try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page'); }
-    catch { /* not ready */ }
-    if (!target) await sleep(100);
+    let target;
+    for (let i = 0; i < 100 && !target; i++) {
+      try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page'); }
+      catch { /* not ready */ }
+      if (!target) await sleep(100);
+    }
+    if (!target) throw new Error('browser started but no page target appeared');
+
+    cdp = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((res, rej) => { cdp.once('open', res); cdp.once('error', rej); });
+  } catch (err) {
+    // Never leave a half-started browser running: it would keep the test process alive.
+    if (cdp) cdp.terminate();
+    await stopProcess(proc);
+    removeProfile(profile);
+    throw err;
   }
-
-  const cdp = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { cdp.once('open', res); cdp.once('error', rej); });
 
   let nextId = 1;
   const pending = new Map();
@@ -86,9 +111,14 @@ async function launchPage(executable, { width = 1400, height = 900, scale = 2 } 
       errors.push(`${m.params.entry.text} ${m.params.entry.url || ''}`.trim());
     }
   });
-  const send = (method, params = {}) => new Promise(resolve => {
+  // Every command times out, so a crashed or wedged browser fails the test instead of hanging it.
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, resolve);
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`CDP ${method} got no reply within ${commandTimeout / 1000} s`));
+    }, commandTimeout);
+    pending.set(id, m => { clearTimeout(timer); resolve(m); });
     cdp.send(JSON.stringify({ id, method, params }));
   });
 
@@ -122,13 +152,12 @@ async function launchPage(executable, { width = 1400, height = 900, scale = 2 } 
       fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));
     },
     async close() {
-      cdp.close();
-      proc.kill();
-      await new Promise(r => (proc.exitCode !== null ? r() : proc.once('exit', r)));
+      cdp.terminate();
+      await stopProcess(proc);
       await sleep(200);
-      try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* still locked on Windows */ }
+      removeProfile(profile);
     },
   };
 }
 
-module.exports = { findBrowser, launchPage, sleep };
+module.exports = { findBrowser, launchPage, stopProcess, sleep };

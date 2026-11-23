@@ -17,7 +17,10 @@ const ROOT    = path.join(__dirname, '..', '..');
 const BROWSER = findBrowser();
 const MIN     = 60_000;
 
-test('map UI in a real browser', { skip: !BROWSER && 'no Chrome/Chromium/Edge found (set CHROME_PATH)' }, async (t) => {
+test('map UI in a real browser', {
+  skip:    !BROWSER && 'no Chrome/Chromium/Edge found (set CHROME_PATH)',
+  timeout: 5 * 60_000,   // fail rather than hang if anything wedges
+}, async (t) => {
   const t0 = Date.now() - 5000;
   const js8 = await startFakeJS8({ replies: {
     'STATION.GET_CALLSIGN': id => ({ type: 'STATION.CALLSIGN', value: 'W1AW', params: { _ID: id } }),
@@ -35,22 +38,26 @@ test('map UI in a real browser', { skip: !BROWSER && 'no Chrome/Chromium/Edge fo
       1700: { DIAL: 7078000, OFFSET: 1700, SNR: -12, TEXT: 'VE3AAA: W1AW HEARTBEAT SNR -14 ♢', UTC: t0 } } }),
   } });
 
+  // Register each cleanup as soon as its resource exists, so a failure part-way
+  // through setup (e.g. the browser not starting) can't leave processes running
+  // and hang the test run.
+  t.after(() => js8.close());
+
   const webPort = await freePort();
   const server  = spawn(process.execPath,
     ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8.port), '--poll-seconds', '2'],
     { cwd: ROOT, stdio: 'ignore' });
-  const page = await launchPage(BROWSER);
+  t.after(() => { server.kill(); });
 
-  t.after(async () => {
-    await page.close();
-    server.kill();
-    await js8.close();
-  });
+  const page = await launchPage(BROWSER);
+  t.after(() => page.close());
 
   await page.navigate(`http://localhost:${webPort}/`);
   await page.waitFor(`document.querySelectorAll('.station-item').length >= 6`, 20_000);
   const ev = expr => page.eval(expr);
-  const setView = (lat, lon, z) => ev(`new Promise(r => { js8map.map.once('moveend', () => r()); js8map.map.setView([${lat}, ${lon}], ${z}, { animate: false }); })`);
+  // Resolves on 'moveend', or after 2 s if the view didn't need to change
+  const setView = (lat, lon, z) => ev(`new Promise(r => { js8map.map.once('moveend', () => r()); setTimeout(r, 2000);
+    js8map.map.setView([${lat}, ${lon}], ${z}, { animate: false }); })`);
 
   await t.test('modules load and the status shows a real bullet', async () => {
     assert.equal(await ev(`typeof window.js8map`), 'object', 'main.js ran');

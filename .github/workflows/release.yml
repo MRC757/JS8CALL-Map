@@ -26,6 +26,7 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag matches package.json
@@ -48,6 +49,7 @@ jobs:
   windows:
     needs: prepare
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -79,6 +81,7 @@ jobs:
     needs: prepare
     name: linux (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -114,6 +117,7 @@ jobs:
   checksums:
     needs: [windows, linux]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: SHA256SUMS
         env:

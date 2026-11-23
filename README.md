@@ -1,5 +1,7 @@
 # JS8CALL Map
 
+Runs on **Windows**, **Linux PCs** and **Raspberry Pi**, on a desktop or headless.
+
 An interactive browser-based map that displays the real-time locations of ham radio operators heard by your local [JS8CALL](http://js8call.com/) station. Stations are plotted on a Maidenhead grid map with signal strength, frequency data, message history, and distance/bearing tools.
 ![Light](https://github.com/user-attachments/assets/7c6e1e9f-239b-4f4f-bd51-27bef5bcf27c)
 ![Slate](https://github.com/user-attachments/assets/960c92b4-2686-47f2-97e5-3d8729c45378)
@@ -13,10 +15,13 @@ An interactive browser-based map that displays the real-time locations of ham ra
 - **Live station plotting** — pins appear automatically as JS8CALL hears stations; stations expire 1 hour (configurable) after JS8CALL last heard them
 - **Shared grid squares** — stations reporting the same grid fan out around its centre so every pin stays visible and clickable
 - **Duplicate-free message history** — repeated polls and live events of the same text are stored once
+- **Who's hearing you** — stations that send you an SNR report (e.g. `KN4CRD: KJ4QEO SNR -05`, or a heartbeat reply) get a ring on their pin and a "hears you" badge; **Heard Me** draws great-circle paths to them, coloured by the SNR they reported, and messages addressed to you are highlighted
+- **Pins fade with age** — fully solid for 5 minutes after a station is heard, then fading until it expires, so fresh activity stands out
 - **Grid-based location** — grids are extracted from both JS8CALL spot data and message text (e.g. `GRID FM16RS`)
 - **Signal-strength colour coding** — marker and sidebar colours reflect live SNR
 - **Maidenhead grid overlay** — toggleable overlay that auto-adjusts detail level as you zoom (field → square → subsquare); rendered on canvas at high zoom for smooth performance
 - **Day/Night overlay** — solar terminator updated every minute, useful for visualising HF propagation conditions
+- **Greyline** — the twilight band (sun 0° to 6° below the horizon) along the terminator, where long-distance HF paths are often enhanced
 - **US overlays** — toggleable US state/county borders with county name labels (zoom ≥ 8) and interstate highway routes with route number labels (zoom ≥ 7); all data bundled offline
 - **Colour themes** — five built-in themes (Dark, Midnight, Terminal, Light, Slate); preference saved across sessions
 - **Station detail panel** — click any pin or sidebar entry to see (updates live without losing your scroll position):
@@ -29,9 +34,11 @@ An interactive browser-based map that displays the real-time locations of ham ra
 - **Distance measurement tool** — step-by-step prompts guide you to click two points; shows distance (km / miles) and bearing
 - **Your home station** — pulsing blue square marker; map centres on your grid at startup
 - **Fully offline** — world basemap, Leaflet.js, and all assets are bundled locally; no internet connection required
-- **Opens itself** — the packaged `.exe` opens the map in your browser as soon as the server is ready
+- **Opens itself** — the installed app opens the map in your browser as soon as the server is ready
+- **Windows, Linux and Raspberry Pi** — a Windows `.exe`, and `.deb` packages for Debian/Ubuntu PCs and 64-bit Raspberry Pi OS, with a menu entry for desktops and a systemd service for headless use
 - **Private by default** — only reachable from the same PC unless you opt in to LAN access; other websites can't read the live feed through your browser
 - **Auto-reconnect** — reconnects to JS8CALL automatically if it restarts; 15-second connect timeout prevents hangs
+- **Session recording** — `--record` saves JS8CALL's raw traffic so real sessions can be replayed as tests
 - **Graceful shutdown** — `Ctrl+C` closes all connections cleanly
 - **Accessible** — keyboard-navigable sidebar, ARIA labels, respects OS reduced-motion preference
 - **Collapsible sidebar** — maximise map space when needed
@@ -41,13 +48,19 @@ An interactive browser-based map that displays the real-time locations of ham ra
 ## Requirements
 
 ### To run from source
-- [Node.js](https://nodejs.org/) v18 or later (v22 or later to run the test suite)
+- [Node.js](https://nodejs.org/) v22 or later (the browser modules and test suite need it)
 - JS8CALL installed and running locally
 
 ### To run the packaged `.exe`
 - Windows 10 or 11
 - JS8CALL installed and running locally
 - No other installs required
+
+### To run the `.deb` package
+- **PC:** 64-bit Debian 10+, Ubuntu 20.04+, Linux Mint 20+ or similar (`amd64`)
+- **Raspberry Pi:** Pi 4 or 5 (or Pi 3 / Zero 2 W) running **64-bit** Raspberry Pi OS (`arm64`).
+  32-bit Raspberry Pi OS isn't supported by the package; run from source instead.
+- JS8CALL installed and running on the same machine (or reachable on your network)
 
 ---
 
@@ -61,6 +74,57 @@ Before starting the map, configure the JS8CALL TCP API server:
 4. Leave the port at the default **2237**
 5. Set **"Max TCP Connections"** to **3** (the default of 1 is not enough — the map uses one persistent connection for real-time events and additional short-lived connections to query station and activity data)
 6. Click **OK**
+
+---
+
+## Installation on Linux and Raspberry Pi
+
+Download the package for your machine from the [Releases](../../releases) page —
+`js8call-map_<version>_amd64.deb` for a PC, `js8call-map_<version>_arm64.deb` for a
+Raspberry Pi — and install it:
+
+```bash
+sudo apt install ./js8call-map_*_arm64.deb     # or …_amd64.deb on a PC
+```
+
+Not sure which one? `dpkg --print-architecture` prints `amd64` or `arm64`.
+
+### On a desktop
+
+Start **JS8CALL Map** from the applications menu (Internet / Ham Radio), or run
+`js8call-map` in a terminal. It opens the map in your browser; the terminal window
+shows the log, and closing it stops the map.
+
+### Headless (Raspberry Pi without a monitor)
+
+Run it as a systemd **user** service, as the same user that runs JS8CALL, and let
+other devices on your network reach it:
+
+```bash
+mkdir -p ~/.config/js8call-map
+echo '{ "webHost": "0.0.0.0" }' > ~/.config/js8call-map/config.json
+systemctl --user enable --now js8call-map
+sudo loginctl enable-linger $USER          # also start at boot, without logging in
+journalctl --user -u js8call-map           # shows the address to browse to
+```
+
+Then open `http://<the-pi's-address>:8181` on any phone, tablet or PC. If a firewall
+is enabled, allow the port: `sudo ufw allow 8181/tcp`.
+
+When there is no desktop session, the app never tries to open a browser — it prints
+the addresses to use instead.
+
+### Settings on Linux
+
+Settings are read from `/etc/js8call-map/config.json` (system-wide), then
+`~/.config/js8call-map/config.json` (per user, wins), then environment variables
+and command-line options. `js8call-map --config <file>` uses one specific file.
+See [Configuration](#configuration) for the options.
+
+### Updating and removing
+
+Install a newer `.deb` the same way to upgrade. To remove:
+`sudo apt remove js8call-map` (your `~/.config/js8call-map` settings are kept).
 
 ---
 
@@ -86,12 +150,34 @@ npm start
 ### Running the tests
 
 ```bash
-npm test
+npm test               # unit + end-to-end tests (no browser needed)
+npm run test:browser   # drives the real map in headless Chrome/Edge
 ```
 
-The suite covers the Maidenhead grid maths, JS8CALL message parsing (deduplication,
-expiry, validation), configuration, browser launching, the `.exe` asset list, and an
-end-to-end run of the server against a simulated JS8CALL.
+`npm test` covers the Maidenhead grid, sun and great-circle maths, JS8CALL message
+parsing (deduplication, expiry, validation, "hears you" reports), configuration,
+recording and replay, the `.exe` asset list, and an end-to-end run of the server
+against a simulated JS8CALL.
+
+`npm run test:browser` starts the server against a simulated JS8CALL and checks the
+map in a headless browser: fanned-out pins, fading, "hears you" rings and paths,
+greyline, the detail panel, measuring, labels and themes. It finds Chrome, Chromium
+or Edge automatically (set `CHROME_PATH` to use another) and is skipped if none is
+installed. Set `SCREENSHOT_DIR` to save screenshots.
+
+### Recording a real session
+
+Recordings of real JS8CALL traffic make the best test data:
+
+```bash
+js8call-map.exe --record session.jsonl      # or: npm start -- --record session.jsonl
+# … leave it running on the air, then stop with Ctrl+C …
+npm run replay -- session.jsonl --stations  # summarise what was captured
+```
+
+Copy a recording into [`test/fixtures/`](test/fixtures/) and `npm test` replays it
+and checks the results. See [`test/fixtures/README.md`](test/fixtures/README.md).
+Recordings stop automatically at 100 MB.
 
 ---
 
@@ -100,7 +186,9 @@ end-to-end run of the server against a simulated JS8CALL.
 Defaults work for a typical single-PC setup. To change them, use any of the following
 (later ones win):
 
-1. A `config.json` file next to `js8call-map.exe` (or in the project folder when running from source)
+1. A `config.json` file — next to `js8call-map.exe` on Windows; `/etc/js8call-map/config.json`
+   and then `~/.config/js8call-map/config.json` on Linux; in the project folder when running
+   from source. `--config <file>` uses one specific file instead.
 2. Environment variables
 3. Command-line options
 
@@ -113,7 +201,8 @@ Defaults work for a typical single-PC setup. To change them, use any of the foll
 | Poll interval (s) | `pollSeconds` | `JS8MAP_POLL_SECONDS` | `--poll-seconds` | `30` |
 | Station expiry (min) | `ttlMinutes` | `JS8MAP_TTL_MINUTES` | `--ttl-minutes` | `60` |
 | Messages per station | `maxMessages` | `JS8MAP_MAX_MESSAGES` | `--max-messages` | `100` |
-| Open browser at startup | `openBrowser` | `JS8MAP_OPEN` | `--open` / `--no-open` | on for the exe, off from source |
+| Open browser at startup | `openBrowser` | `JS8MAP_OPEN` | `--open` / `--no-open` | on for the installed app (when a desktop is available), off from source |
+| Record raw JS8CALL traffic | `record` | `JS8MAP_RECORD` | `--record <file>` | off |
 
 Example `config.json`:
 
@@ -163,10 +252,50 @@ For a desktop shortcut: right-click `js8call-map.exe` → **Create shortcut** an
 to your Desktop. Options such as `--port 8282` can be added to the shortcut's **Target**
 field. The old `launch.bat` still works; it now simply starts the exe.
 
+### Building the Linux packages
+
+```bash
+npm run package:linux-x64       # → dist/linux-x64/js8call-map
+npm run package:linux-arm64     # → dist/linux-arm64/js8call-map
+npm run deb -- --arch amd64     # → dist/js8call-map_<version>_amd64.deb
+npm run deb -- --arch arm64     # → dist/js8call-map_<version>_arm64.deb
+```
+
+The `.deb` builder ([`scripts/build-deb.js`](scripts/build-deb.js)) is plain Node, so
+packages can be assembled on any OS. Build the binaries on Linux itself (as the
+release workflow does): pkg can cross-build them from Windows, but a native build is
+the one that's tested. The package installs the binary to `/usr/bin`, a menu entry
+and icon, a systemd user service, and docs; its contents live in
+[`packaging/linux/`](packaging/linux/). Set `DEB_MAINTAINER` to change the
+`Maintainer:` field.
+
+### Automated releases
+
+Pushing a version tag builds the Windows exe and both Linux packages on GitHub and publishes them
+([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+```bash
+npm version 1.3.0 --no-git-tag-version
+git commit -am "Release v1.3.0"
+git tag v1.3.0
+git push origin main v1.3.0
+```
+
+The workflow checks the tag matches `package.json`, runs the tests on each platform,
+builds the Windows exe and the `amd64` and `arm64` `.deb` packages natively (the ARM
+build runs on an ARM machine, the same CPU family as a Raspberry Pi 4/5), installs and
+smoke-tests each one, attaches them to the release with a `SHA256SUMS` file, and
+creates the release with generated notes if you haven't written one for that tag.
+
+Every push and pull request also runs the tests on Windows and Linux, the browser
+tests, and builds both `.deb` packages, validates them with `dpkg-deb` and `lintian`,
+installs them, runs the installed app (including headless and `~/.config` settings),
+and removes them again ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
 ### Distributing to other operators
 
-Send them `js8call-map.exe` (or the zip from the [Releases](../../releases) page).
-They double-click it and the map opens in their browser.
+Point them to the [Releases](../../releases) page: Windows users download the zip and
+double-click `js8call-map.exe`; Linux and Raspberry Pi users install the matching `.deb`.
 
 ---
 
@@ -189,6 +318,8 @@ They double-click it and the map opens in their browser.
 | Theme selector | Switch between Dark, Midnight, Terminal, Light, and Slate colour themes |
 | **Grid** | Toggle the Maidenhead grid overlay on/off |
 | **Night** | Toggle the day/night (solar terminator) overlay — useful for HF propagation planning |
+| **Greyline** | Toggle the twilight band along the terminator (sun 0° to 6° below the horizon) |
+| **Heard Me** | Draw great-circle paths from your station to every station that recently reported hearing you |
 | **US States** | Toggle US state and county border overlay; county names appear at zoom ≥ 8 |
 | **Interstates** | Toggle US interstate highway overlay; route numbers appear at zoom ≥ 7 |
 | **Measure Distance** | Activate measure mode — a hint banner guides you to click two points |
@@ -216,6 +347,7 @@ Click any station pin or sidebar entry to open the detail panel on the right. It
   | 🟠 Orange | −21 to −30 dB | Weak |
   | 🔴 Red | < −30 dB | Very weak |
 
+- **Hears You** — the SNR this station last reported for your signal, and when
 - **Distance / Bearing** — great-circle distance and bearing from your station (requires your grid to be set in JS8CALL)
 - **Messages** — all text heard from that station, tagged by type:
   - `DIRECTED` — message addressed to a specific callsign
@@ -233,6 +365,26 @@ Invalid locators are ignored. When several stations share a grid square, their p
 fanned out a few pixels around the square's centre; your own station stays nearest the centre.
 
 Stations that have never transmitted their grid will appear in the sidebar but not on the map until a grid is received.
+
+### Who's Hearing You
+
+When a station sends an SNR report addressed to your callsign — a reply like
+`KN4CRD: KJ4QEO SNR -05`, a heartbeat acknowledgement such as
+`KN4CRD: KJ4QEO HEARTBEAT SNR -12`, or any message containing `SNR` after your
+callsign — the map records it as that station hearing you:
+
+- its pin gets a ring and its sidebar entry a **hears you −12 dB** badge
+- the detail panel shows the report and how long ago it was sent
+- **Heard Me** draws a great-circle path to it, coloured by the reported SNR
+
+Reports expire with the station (1 hour by default). Messages addressed to you are
+highlighted in the message list.
+
+### Pin Fading
+
+Pins are fully solid for 5 minutes after a station was last heard, then fade
+steadily until the station expires. Your own station and the selected station
+always stay solid.
 
 ### Unread Message Indicator
 
@@ -259,7 +411,7 @@ JS8CALL application  (localhost:2237)
 server.js  (Node.js + Express + WebSocket)
         │  WebSocket — live push updates
         ▼
-Browser  (Leaflet.js + app.js)
+Browser  (Leaflet.js + ES modules in public/js/)
         │
         └─ http://localhost:8181
 ```
@@ -276,9 +428,15 @@ Browser  (Leaflet.js + app.js)
 - Validates callsigns (must contain a digit), grid locators, frequency, offset, and message text before storing
 - Uses JS8CALL's own timestamps for "last heard", so stations repeated in every activity poll still expire on time; older reports never overwrite fresher readings
 - Stores each message once — exact repeats from polling, and the same text arriving via a live event within 10 minutes, are dropped
+- Fills in who each message is addressed to and records SNR reports sent to your callsign ("hears you")
 - Keeps messages newest-first, capped per station; removes stations not heard within the expiry time
 
-**app.js responsibilities:**
+**Browser modules (`public/js/`):** `main.js` wires up the rest. `map.js` (map and
+basemap), `grid-overlay.js`, `us-overlays.js`, `daynight.js` (night and greyline),
+`markers.js`, `sidebar.js`, `detail.js`, `selection.js`, `measure.js`,
+`heard-paths.js`, `theme.js` and `ws.js` (server messages) each own one part of the
+page; `sun.js`, `geo.js` and `util.js` are pure maths/formatting and are unit-tested
+in Node. Together they:
 - Renders a Leaflet map with a fully offline vector world basemap (TopoJSON via world-atlas)
 - Draws the Maidenhead grid overlay (polylines at low zoom, canvas at zoom ≥ 9)
 - Calculates and renders the solar terminator for the day/night overlay
@@ -302,8 +460,18 @@ JS8CALL Map/
 │   ├── config.js         config.json / environment / command-line settings
 │   ├── net-utils.js      Query-reply matching, WebSocket origin check, line splitter
 │   ├── open-browser.js   Opens the map in the default browser at startup
-│   └── assets.js         The files served to the browser (and bundled into the .exe)
+│   ├── assets.js         The files served to the browser (and bundled into the .exe)
+│   ├── recorder.js       --record: saves raw JS8CALL traffic as JSON Lines
+│   └── replay.js         Replays a recording through the station store
+├── scripts/
+│   ├── replay.js      npm run replay — summarise a recording
+│   └── build-deb.js   npm run deb — build the Debian package
+├── packaging/linux/   Menu entry, icon, systemd user service, copyright and docs for the .deb
 ├── test/              node:test suites (npm test)
+│   ├── browser/          Headless-browser tests (npm run test:browser)
+│   ├── fixtures/         Recorded JS8CALL sessions replayed by the tests
+│   └── helpers/          Fake JS8CALL server and headless-browser driver
+├── .github/workflows/ CI (tests on every push) and Release (exe on version tags)
 ├── launch.bat         Optional launcher for older shortcuts (the exe opens the browser itself)
 ├── package.json       Project config, npm scripts, pkg bundler config
 ├── .gitignore         Git exclusions (build output, release zips, local config.json)
@@ -314,7 +482,7 @@ JS8CALL Map/
     ├── index.html     App shell, layout, ARIA landmark roles
     ├── style.css      Themes, CSS custom properties, SNR colour classes
     ├── grid.js        Maidenhead grid / distance maths (shared by browser, server and tests)
-    ├── app.js         Leaflet map, grid overlay, day/night overlay, US overlays, markers, sidebar, measure tool
+    ├── js/            Browser ES modules (map, overlays, markers, sidebar, panel, …) — see Architecture
     └── data/
         ├── interstates.geojson   US interstate highway routes (Census TIGER-derived, simplified)
         └── county_names.json     FIPS → county name lookup (3,143 entries)
@@ -353,6 +521,17 @@ JS8CALL Map/
 - Start with a different port: `js8call-map.exe --port 8282` (or `npm start -- --port 8282`)
 - Or create `config.json` next to the program containing `{ "webPort": 8282 }`
 - The packaged exe opens your browser on the new port automatically
+
+**Linux: `js8call-map` starts but no browser opens**
+- With no desktop session (SSH, headless Pi, systemd service) this is expected — browse to the printed address from another device
+- On a desktop, install `xdg-utils` (`sudo apt install xdg-utils`)
+
+**Linux: can't reach the map from another device**
+- Set `{ "webHost": "0.0.0.0" }` in `~/.config/js8call-map/config.json` and restart (`systemctl --user restart js8call-map`)
+- Allow the port through the firewall: `sudo ufw allow 8181/tcp`
+
+**Raspberry Pi: package won't install ("wrong architecture")**
+- The package needs 64-bit Raspberry Pi OS (`dpkg --print-architecture` must print `arm64`). On 32-bit OS, run from source with Node.js 22
 
 **Packaged .exe doesn't start**
 - Open a terminal (`cmd` or PowerShell), run `js8call-map.exe` directly, and check the console output for error messages

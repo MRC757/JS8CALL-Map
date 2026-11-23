@@ -35,6 +35,12 @@
       <button id="btn-night"         class="btn"
               title="Toggle day/night overlay — shows the solar terminator for HF propagation"
               aria-pressed="false">Night</button>
+      <button id="btn-greyline"      class="btn"
+              title="Toggle the greyline — the twilight band (sun 0° to 6° below the horizon) where HF paths are often enhanced"
+              aria-pressed="false">Greyline</button>
+      <button id="btn-heard-paths"   class="btn"
+              title="Draw great-circle paths to stations that have reported hearing you"
+              aria-pressed="false">Heard Me</button>
       <button id="btn-us-counties"   class="btn"
               title="Toggle US state and county borders"
               aria-pressed="false">US States</button>
@@ -93,6 +99,6 @@
   <script src="/leaflet/leaflet.js"></script>
   <script src="/topojson/topojson-client.min.js"></script>
   <script src="grid.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,21 @@
+# systemd *user* service — runs the map as you, alongside JS8CALL.
+#
+#   systemctl --user enable --now js8call-map     start now and at every login
+#   sudo loginctl enable-linger $USER             …and at boot, without logging in (headless Pi)
+#   journalctl --user -u js8call-map -f           follow its log
+#
+# To view the map from other devices, put {"webHost": "0.0.0.0"} in
+# ~/.config/js8call-map/config.json and restart:  systemctl --user restart js8call-map
+
+[Unit]
+Description=JS8CALL Map - live map of stations heard by JS8CALL
+Documentation=https://github.com/MRC757/JS8CALL-Map
+
+[Service]
+ExecStart=/usr/bin/js8call-map --no-open
+WorkingDirectory=%h
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

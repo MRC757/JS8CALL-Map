@@ -17,6 +17,14 @@ test('every served file exists on disk', () => {
   for (const rel of Object.values(ASSETS)) assert.ok(fs.existsSync(assetPath(rel)), rel);
 });
 
+test('every browser module in public/js is served (none forgotten)', () => {
+  const served = new Set(Object.values(ASSETS));
+  const dir = path.join(__dirname, '..', 'public', 'js');
+  for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.js'))) {
+    assert.ok(served.has(`public/js/${f}`), `public/js/${f} missing from lib/assets.js`);
+  }
+});
+
 test('every served file is bundled into the exe', () => {
   for (const rel of Object.values(ASSETS)) assert.ok(bundled(rel), `${rel} missing from package.json pkg.assets`);
 });

@@ -1,0 +1,126 @@
+name: Release
+
+# Pushing a version tag builds every package and publishes them on GitHub Releases:
+#
+#   npm version 1.3.0 --no-git-tag-version   # bump package.json + lockfile
+#   git commit -am "Release v1.3.0"
+#   git tag v1.3.0
+#   git push origin main v1.3.0
+#
+# Assets:  js8call-map-v1.3.0-windows-x64.zip   (Windows exe)
+#          js8call-map_1.3.0_amd64.deb          (Debian/Ubuntu/Mint on x64 PCs)
+#          js8call-map_1.3.0_arm64.deb          (Raspberry Pi OS 64-bit, Pi 4/5)
+#          SHA256SUMS
+#
+# If a release for the tag already exists (e.g. you wrote the notes by hand
+# first), the files are attached to it; otherwise one is created with notes
+# generated from the commits since the previous tag.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"; tag="${tag#V}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+      - name: Create the release if it doesn't exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || \
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --latest --notes \
+            "**Windows:** download the \`windows-x64.zip\`, unzip and double-click \`js8call-map.exe\`.
+          **Linux / Raspberry Pi:** download the \`amd64.deb\` (PC) or \`arm64.deb\` (Raspberry Pi 4/5, 64-bit OS) and install with \`sudo apt install ./js8call-map_*.deb\`."
+
+  windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run package:win
+      - name: Smoke-test the exe
+        shell: bash
+        run: |
+          ./dist/js8call-map.exe --help | head -1
+          ./dist/js8call-map.exe --no-open --port 18181 --js8-port 1 > exe.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18181/ > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:18181/js/main.js > /dev/null
+          taskkill //IM js8call-map.exe //F || true
+          cat exe.log
+      - name: Zip and upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="js8call-map-$GITHUB_REF_NAME-windows-x64.zip"
+          pwsh -Command "Compress-Archive -Path dist/js8call-map.exe -DestinationPath $name"
+          gh release upload "$GITHUB_REF_NAME" "$name" --clobber
+
+  linux:
+    needs: prepare
+    name: linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, pkg: x64,   runner: ubuntu-latest }
+          - { arch: arm64, pkg: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build binary and .deb
+        run: |
+          npm run package:linux-${{ matrix.pkg }}
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) npm run deb -- --arch ${{ matrix.arch }}
+          echo "DEB=$(ls dist/js8call-map_*_${{ matrix.arch }}.deb)" >> "$GITHUB_ENV"
+      - name: Install and smoke-test
+        run: |
+          set -e
+          dpkg-deb --info "$DEB"
+          sudo apt-get install -y "./$DEB"
+          js8call-map --no-open --port 18181 --js8-port 1 > run.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18181/ > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:18181/js/main.js > /dev/null
+          kill $!
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" "$DEB" --clobber
+
+  checksums:
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$GITHUB_REF_NAME" --pattern '*.zip' --pattern '*.deb'
+          sha256sum * | tee SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --clobber

@@ -7,11 +7,12 @@ const WebSocket = require('ws');
 const path      = require('path');
 const fs        = require('fs');
 
-const { loadConfig, HELP }                              = require('./lib/config');
+const { loadConfig, configHint, HELP }                  = require('./lib/config');
 const { createStationStore }                            = require('./lib/station-store');
 const { isResponseTo, isAllowedOrigin, LineSplitter }   = require('./lib/net-utils');
-const { browserUrl, openBrowser }                       = require('./lib/open-browser');
+const { browserUrl, openBrowser, hasDesktop, networkUrls } = require('./lib/open-browser');
 const { ASSETS, assetPath }                             = require('./lib/assets');
+const { createRecorder }                                = require('./lib/recorder');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 let config;
@@ -22,6 +23,10 @@ if (config.help) { console.log(HELP); process.exit(0); }
 const POLL_INTERVAL    = config.pollSeconds * 1000;
 const CLEANUP_INTERVAL = 60_000;
 const QUERY_TIMEOUT    = 5_000;
+
+// Optional raw-traffic recording (--record <file>) for building test data.
+// Created once the web server is listening, so a failed start leaves no file.
+let recorder = null;
 
 // ─── HTTP + WebSocket Server ──────────────────────────────────────────────────
 const app = express();
@@ -44,14 +49,18 @@ httpServer.on('error', err => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\nError: Port ${config.webPort} is already in use.`);
     console.error('Start with a different port, e.g.  js8call-map --port 8282');
-    console.error('or put { "webPort": 8282 } in config.json next to the program.\n');
+    console.error(`or put { "webPort": 8282 } in ${configHint()}.\n`);
   } else {
     console.error('HTTP server error:', err.message);
   }
   process.exit(1);
 });
 
-wss.on('error', err => console.error('WebSocket server error:', err.message));
+// The WebSocket server re-emits the HTTP server's listen errors; those are
+// already reported (with advice) by the handler above.
+wss.on('error', err => {
+  if (err.code !== 'EADDRINUSE') console.error('WebSocket server error:', err.message);
+});
 
 function broadcast(payload) {
   const msg = JSON.stringify(payload);
@@ -113,7 +122,10 @@ function queryJS8Call(type, value = '') {
         let parsed;
         try { parsed = JSON.parse(line); } catch { continue; }
         // Live events can arrive on this socket before the reply — skip them.
-        if (isResponseTo(parsed, type, id)) return finish(null, parsed);
+        if (isResponseTo(parsed, type, id)) {
+          if (recorder) recorder.record('reply', line, { query: type });
+          return finish(null, parsed);
+        }
       }
     });
 
@@ -159,6 +171,7 @@ function connectToJS8Call() {
 
   socket.on('data', chunk => {
     for (const line of splitter.push(chunk)) {
+      if (recorder) recorder.record('event', line);
       if (!store.processMessage(line) && line.includes('"CLOSE"')) console.log('JS8CALL sent CLOSE');
     }
     if (splitter.overflowed) {
@@ -190,17 +203,23 @@ function shutdown(signal) {
   clearInterval(pollTimer);
   if (socket) { socket.removeAllListeners('close'); socket.destroy(); }
   for (const client of wss.clients) client.terminate();
+  const flushed = recorder
+    ? recorder.close().then(() => console.log(`Recorded ${recorder.count} lines to ${recorder.file}`))
+    : Promise.resolve();
   wss.close(() => {
     httpServer.close(() => {
-      console.log('Shutdown complete.');
-      process.exit(0);
+      flushed.then(() => {
+        console.log('Shutdown complete.');
+        process.exit(0);
+      });
     });
   });
   setTimeout(() => process.exit(1), 3_000).unref();
 }
 
 process.on('SIGINT',  () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));   // systemctl stop
+process.on('SIGHUP',  () => shutdown('SIGHUP'));    // terminal window closed (Linux/macOS)
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 // The browser is opened only after listen() succeeds, so it always gets the
@@ -208,8 +227,19 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 httpServer.listen(config.webPort, config.webHost, () => {
   const url = browserUrl(config.webHost, config.webPort);
   console.log(`Web interface → ${url}`);
-  if (config.webHost === '0.0.0.0' || config.webHost === '::') console.log('(listening on all network interfaces)');
-  if (config.openBrowser) {
+  if (config.configFilesUsed.length) console.log(`Settings from ${config.configFilesUsed.join(', ')}`);
+  if (config.webHost === '0.0.0.0' || config.webHost === '::') {
+    const urls = networkUrls(config.webPort);
+    console.log('Listening on all network interfaces' + (urls.length ? ' — from other devices use:' : ''));
+    for (const u of urls) console.log(`  ${u}`);
+  }
+  if (config.record) {
+    recorder = createRecorder(config.record);
+    console.log(`Recording JS8CALL traffic to ${recorder.file} (stop with Ctrl+C)`);
+  }
+  if (config.openBrowser && !hasDesktop()) {
+    console.log('No desktop session found, so no browser was opened. Browse to the address above.');
+  } else if (config.openBrowser) {
     console.log('Opening your web browser… (start with --no-open to skip this)');
     openBrowser(url);
   }

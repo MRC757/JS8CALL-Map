@@ -689,6 +689,34 @@ body {
 
 .no-messages { color: var(--text-dim); font-size: 0.78rem; font-style: italic; padding: 8px 0; }
 
+/* ── "Hears you" ───────────────────────────────────────────────────────────── */
+/* Ring around pins of stations that recently reported your signal */
+.station-marker.hears-me {
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent);
+}
+.station-marker.hears-me.selected {
+  box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 4px var(--accent), 0 0 8px rgba(255,255,255,0.45);
+}
+.station-hears:empty { display: none; }
+.hears-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+}
+/* Messages addressed to you */
+.message-item.to-me {
+  border-left: 3px solid var(--accent);
+  padding-left: 7px;
+  background: var(--accent-dim);
+  border-radius: 0 4px 4px 0;
+}
+.message-item.to-me .message-to { color: var(--text); font-weight: 600; }
+
 /* ── Measure Result Banner ────────────────────────────────────────────────── */
 #measure-result {
   position: absolute;

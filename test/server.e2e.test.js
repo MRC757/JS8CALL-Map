@@ -10,6 +10,9 @@ const path      = require('path');
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
 
+const fs   = require('fs');
+const os   = require('os');
+
 const ROOT = path.join(__dirname, '..');
 
 function freePort() {
@@ -35,9 +38,9 @@ function fakeJS8(port) {
     'STATION.GET_CALLSIGN': id => ({ type: 'STATION.CALLSIGN', value: 'W1AW', params: { _ID: id } }),
     'STATION.GET_GRID':     id => ({ type: 'STATION.GRID', value: 'FN31PR', params: { _ID: id } }),
     'RX.GET_CALL_ACTIVITY': id => ({ type: 'RX.CALL_ACTIVITY', value: '', params: { _ID: id,
-      CALL_ACTIVITY: { KN4CRD: { GRID: 'EM73', SNR: -8, UTC: t0 } } } }),
+       KN4CRD: { GRID: 'EM73', SNR: -8, UTC: t0 } } }),
     'RX.GET_BAND_ACTIVITY': id => ({ type: 'RX.BAND_ACTIVITY', value: '', params: { _ID: id,
-      BAND_ACTIVITY: { 1500: { DIAL: 7078000, OFFSET: 1500, SNR: -8, TEXT: 'KN4CRD: @ALLCALL CQ CQ ♢', UTC: t0 } } } }),
+       1500: { DIAL: 7078000, OFFSET: 1500, SNR: -8, TEXT: 'KN4CRD: @ALLCALL CQ CQ ♢', UTC: t0 } } }),
   };
 
   const server = net.createServer(sock => {
@@ -100,8 +103,16 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
   const webPort = await freePort();
   const js8     = await fakeJS8(js8Port);
 
+  const recordDir  = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-rec-'));
+  const recordFile = path.join(recordDir, 'session.jsonl');
+  t.after(async () => {
+    await new Promise(r => setTimeout(r, 300));   // let the killed server release the file (Windows)
+    try { fs.rmSync(recordDir, { recursive: true, force: true }); } catch { /* temp dir; harmless */ }
+  });
+
   const proc = spawn(process.execPath,
-    ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8Port), '--poll-seconds', '1'],
+    ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8Port), '--poll-seconds', '1',
+     '--record', recordFile],
     { cwd: ROOT, env: { ...process.env, JS8MAP_HOST: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', d => { log += d; });
@@ -119,17 +130,20 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
     catch { if (i > 100) throw new Error('server did not start:\n' + log); await new Promise(r => setTimeout(r, 100)); }
   }
 
-  await t.test('serves UI, shared grid module and data files', async () => {
-    for (const [route, type] of [['/', 'text/html'], ['/app.js', 'javascript'], ['/grid.js', 'javascript'],
-                                 ['/style.css', 'text/css'], ['/data/county_names.json', 'json'],
-                                 ['/leaflet/leaflet.js', 'javascript'], ['/topojson/topojson-client.min.js', 'javascript'],
-                                 ['/world-atlas/countries-110m.json', 'json'], ['/us-atlas/counties-10m.json', 'json']]) {
+  await t.test('serves every asset with the right content type', async () => {
+    const { ASSETS } = require('../lib/assets');
+    const expected = { '.html': 'text/html', '.js': 'javascript', '.css': 'text/css', '.json': 'json',
+                       '.geojson': 'json', '.png': 'image/png' };
+    for (const [route, rel] of Object.entries(ASSETS)) {
       const r = await fetch(base + route);
       assert.equal(r.status, 200, route);
-      assert.match(r.headers.get('content-type'), new RegExp(type), route);
+      // ES modules are refused by browsers unless served with a JavaScript MIME type
+      assert.match(r.headers.get('content-type'), new RegExp(expected[path.extname(rel)]), route);
     }
     const html = await (await fetch(base + '/')).text();
-    assert.ok(html.indexOf('grid.js') < html.indexOf('app.js'), 'grid.js loads before app.js');
+    assert.match(html, /<script type="module" src="js\/main\.js">/);
+    assert.ok(html.indexOf('grid.js') < html.indexOf('js/main.js'), 'grid.js loads before the modules');
+    assert.equal((await fetch(base + '/app.js')).status, 404, 'old single-file app.js is gone');
   });
 
   await t.test('only listens on loopback by default, and does not open a browser from source', async (st) => {
@@ -199,6 +213,56 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
     assert.ok(!snap.stations.some(s => s.callsign === 'K1ABC' && snap.myStation.callsign === 'K1ABC'));
     c2.ws.close();
   });
+
+  await t.test('an SNR report addressed to us marks the station as hearing us', async () => {
+    const { c } = await snapshot();
+    const at = Date.now() - 1000;   // in the past: the server caps future timestamps at its own clock
+    js8.emit({ type: 'RX.DIRECTED', value: '', params: { FROM: 'VE3XYZ', TO: 'W1AW',
+      TEXT: 'VE3XYZ: W1AW SNR -07 ♢', UTC: at, SNR: -4 } });
+    const upd = await c.until(m => m.type === 'STATION_UPDATE' && m.station.callsign === 'VE3XYZ' && m.station.heardMe);
+    assert.deepEqual(upd.station.heardMe, { snr: -7, at });
+    const msg = await c.until(m => m.type === 'NEW_MESSAGE' && m.callsign === 'VE3XYZ' && /SNR -07/.test(m.message.text));
+    assert.equal(msg.message.to, 'W1AW');
+    c.ws.close();
+  });
+
+  await t.test('--record captured events and query replies that replay cleanly', async () => {
+    const { parseRecording, replay } = require('../lib/replay');
+    await new Promise(r => setTimeout(r, 300));   // let the write stream flush
+    const { entries, errors } = parseRecording(fs.readFileSync(recordFile, 'utf8'));
+    assert.deepEqual(errors, []);
+    assert.ok(entries.some(e => e.src === 'event' && /VE3XYZ/.test(e.line)), 'live events recorded');
+    for (const q of ['STATION.GET_CALLSIGN', 'STATION.GET_GRID', 'RX.GET_CALL_ACTIVITY', 'RX.GET_BAND_ACTIVITY']) {
+      assert.ok(entries.some(e => e.src === 'reply' && e.query === q), `${q} reply recorded`);
+    }
+    const { store } = replay(entries);
+    assert.deepEqual(store.myStation, { callsign: 'W1AW', grid: 'FN31PR' });
+    assert.ok(store.stations.get('KN4CRD'));
+    assert.equal(store.stations.get('VE3XYZ').heardMe.snr, -7);
+  });
+});
+
+test('port already in use: one clear error, and no recording file left behind', async () => {
+  const net     = require('net');
+  const blocker = net.createServer().listen(0, '127.0.0.1');
+  await new Promise(r => blocker.once('listening', r));
+  const port = blocker.address().port;
+  const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-busy-'));
+  const rec  = path.join(dir, 'never.jsonl');
+  try {
+    const proc = spawn(process.execPath, ['server.js', '--no-open', '--port', String(port), '--record', rec], { cwd: ROOT });
+    let out = '';
+    proc.stdout.on('data', d => { out += d; });
+    proc.stderr.on('data', d => { out += d; });
+    const code = await new Promise(r => proc.on('exit', r));
+    assert.equal(code, 1);
+    assert.match(out, new RegExp(`Port ${port} is already in use`));
+    assert.doesNotMatch(out, /WebSocket server error/);
+    assert.equal(fs.existsSync(rec), false, 'no recording file created');
+  } finally {
+    blocker.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('server reports a clear error for a bad option', async () => {

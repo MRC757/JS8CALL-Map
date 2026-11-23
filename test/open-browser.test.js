@@ -6,7 +6,7 @@ const os     = require('os');
 const path   = require('path');
 const { EventEmitter } = require('events');
 
-const { browserUrl, openCommand, openBrowser } = require('../lib/open-browser');
+const { browserUrl, openCommand, openBrowser, hasDesktop, networkUrls } = require('../lib/open-browser');
 const { loadConfig } = require('../lib/config');
 
 const none = path.join(os.tmpdir(), 'js8map-no-such-config.json');
@@ -49,6 +49,24 @@ test('openBrowser launches detached and reports failures without throwing', () =
 
   assert.doesNotThrow(() => openBrowser('http://x/', { spawnFn: () => { throw new Error('boom'); }, log }));
   assert.equal(warnings.length, 2);
+});
+
+test('hasDesktop: Linux needs an X11 or Wayland session; Windows/macOS always have one', () => {
+  assert.equal(hasDesktop('linux', {}), false);                       // headless Pi, SSH, systemd
+  assert.equal(hasDesktop('linux', { DISPLAY: ':0' }), true);
+  assert.equal(hasDesktop('linux', { WAYLAND_DISPLAY: 'wayland-0' }), true);
+  assert.equal(hasDesktop('win32', {}), true);
+  assert.equal(hasDesktop('darwin', {}), true);
+});
+
+test('networkUrls lists the LAN addresses other devices can use', () => {
+  const ifaces = {
+    lo:    [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
+    eth0:  [{ family: 'IPv4', address: '192.168.1.20', internal: false }, { family: 'IPv6', address: 'fe80::1', internal: false }],
+    wlan0: [{ family: 'IPv4', address: '10.0.0.5', internal: false }],
+  };
+  assert.deepEqual(networkUrls(8181, ifaces), ['http://192.168.1.20:8181/', 'http://10.0.0.5:8181/']);
+  assert.deepEqual(networkUrls(8181, {}), []);
 });
 
 test('openBrowser setting: on for the exe, off from source, overridable', () => {

@@ -1,0 +1,4 @@
+{
+  "//": "Lets Node (the test suite) load these browser files as ES modules. Not served to the browser.",
+  "type": "module"
+}

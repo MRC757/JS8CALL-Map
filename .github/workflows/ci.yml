@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  browser:
+    name: Browser tests
+    runs-on: ubuntu-latest   # Google Chrome is preinstalled on GitHub's Ubuntu runners
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run browser tests
+        run: |
+          mkdir -p screenshots
+          npm run test:browser
+        env:
+          SCREENSHOT_DIR: screenshots
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-screenshots
+          path: screenshots/
+          if-no-files-found: ignore
+
+  linux-package:
+    name: Debian package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, pkg: x64,   runner: ubuntu-latest }
+          - { arch: arm64, pkg: arm64, runner: ubuntu-24.04-arm }   # same CPU family as a Raspberry Pi 4/5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build binary and .deb
+        run: |
+          npm run package:linux-${{ matrix.pkg }}
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) npm run deb -- --arch ${{ matrix.arch }}
+          echo "DEB=$(ls dist/js8call-map_*_${{ matrix.arch }}.deb)" >> "$GITHUB_ENV"
+      - name: Inspect with dpkg-deb
+        run: |
+          dpkg-deb --info "$DEB"
+          dpkg-deb --contents "$DEB"
+      - name: Lint (lintian, advisory)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lintian desktop-file-utils > /dev/null
+          lintian --info --no-tag-display-limit "$DEB" || true
+          desktop-file-validate packaging/linux/js8call-map.desktop
+      - name: Install
+        run: sudo apt-get install -y "./$DEB"
+      - name: Run the installed app
+        run: |
+          set -e
+          command -v js8call-map
+          js8call-map --help | head -3
+          # Headless: --open must fall back gracefully when there is no desktop
+          env -u DISPLAY -u WAYLAND_DISPLAY js8call-map --open --port 18181 --js8-port 1 > run.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18181/ > /dev/null && break; sleep 1; done
+          curl -sf http://127.0.0.1:18181/            | grep -q 'js/main.js'
+          curl -sf http://127.0.0.1:18181/js/main.js  > /dev/null
+          curl -sf http://127.0.0.1:18181/leaflet/leaflet.js > /dev/null
+          kill $!; sleep 1
+          cat run.log
+          grep -q 'No desktop session found' run.log
+      - name: Config from ~/.config and LAN addresses
+        run: |
+          set -e
+          mkdir -p ~/.config/js8call-map
+          echo '{ "webHost": "0.0.0.0", "webPort": 18282 }' > ~/.config/js8call-map/config.json
+          js8call-map --no-open --js8-port 1 > lan.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18282/ > /dev/null && break; sleep 1; done
+          kill $!; sleep 1
+          cat lan.log
+          grep -q 'Settings from .*/.config/js8call-map/config.json' lan.log
+          grep -q 'from other devices use' lan.log
+      - name: systemd user service (best effort — needs a user session on the runner)
+        continue-on-error: true
+        run: |
+          systemd-analyze verify --user /usr/lib/systemd/user/js8call-map.service || true
+          sudo loginctl enable-linger "$USER"
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          systemctl --user daemon-reload
+          systemctl --user start js8call-map
+          sleep 3
+          systemctl --user status js8call-map --no-pager
+          curl -sf http://127.0.0.1:18282/ > /dev/null && echo "service is serving the map"
+          systemctl --user stop js8call-map
+      - name: Remove
+        run: |
+          sudo apt-get remove -y js8call-map
+          if command -v js8call-map; then echo "::error::still installed"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: ${{ env.DEB }}

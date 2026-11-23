@@ -1,0 +1,32 @@
+JS8CALL Map for Debian, Ubuntu and Raspberry Pi OS
+==================================================
+
+JS8CALL must be running with its TCP server enabled (File > Settings >
+Reporting > Enable TCP Server, port 2237) and Max TCP Connections set to 3.
+
+On a desktop
+------------
+Start "JS8CALL Map" from the applications menu (under Internet / Ham Radio),
+or run `js8call-map` in a terminal. It opens the map in your web browser;
+the terminal window shows its log, and closing it stops the map.
+
+Headless (e.g. a Raspberry Pi without a monitor)
+------------------------------------------------
+Run it as a systemd user service, as the same user that runs JS8CALL:
+
+    mkdir -p ~/.config/js8call-map
+    echo '{ "webHost": "0.0.0.0" }' > ~/.config/js8call-map/config.json
+    systemctl --user enable --now js8call-map
+    sudo loginctl enable-linger $USER      # start at boot without logging in
+
+Then browse to http://<the-pi's-address>:8181 from any device on your
+network (`journalctl --user -u js8call-map` prints the address). If a
+firewall is enabled:  sudo ufw allow 8181/tcp
+
+Settings
+--------
+Settings are read from /etc/js8call-map/config.json, then
+~/.config/js8call-map/config.json (which wins), then environment variables and
+command-line options. Run `js8call-map --help` for the full list.
+
+Upstream documentation: https://github.com/MRC757/JS8CALL-Map

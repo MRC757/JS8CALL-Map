@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=JS8CALL Map
+GenericName=JS8 Station Map
+Comment=Live map of the stations your JS8CALL hears
+Exec=js8call-map
+Icon=js8call-map
+Terminal=true
+Categories=Network;HamRadio;
+Keywords=JS8;JS8CALL;ham;amateur;radio;maidenhead;grid;map;
+StartupNotify=false

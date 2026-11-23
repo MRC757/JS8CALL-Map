@@ -50,6 +50,43 @@ test('invalid values and unknown options are rejected', () => {
   assert.equal(loadConfig({ argv: ['--help'], env: {}, configPath: none }).help, true);
 });
 
+test('config file locations per platform', () => {
+  const { configFiles } = require('../lib/config');
+  assert.deepEqual(configFiles({ platform: 'linux', env: { HOME: '/home/pi' }, dir: '/usr/bin' }),
+    ['/etc/js8call-map/config.json', path.join('/home/pi', '.config', 'js8call-map', 'config.json'), path.join('/usr/bin', 'config.json')]);
+  assert.deepEqual(configFiles({ platform: 'linux', env: { HOME: '/home/pi', XDG_CONFIG_HOME: '/cfg' }, dir: '/opt' })[1],
+    path.join('/cfg', 'js8call-map', 'config.json'));
+  assert.deepEqual(configFiles({ platform: 'win32', env: {}, dir: 'C:\\maps' }), [path.join('C:\\maps', 'config.json')]);
+});
+
+test('per-user config overrides system config; --config uses only the named file', () => {
+  const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-'));
+  const home = path.join(dir, 'home');
+  const user = path.join(home, '.config', 'js8call-map', 'config.json');
+  fs.mkdirSync(path.dirname(user), { recursive: true });
+  fs.writeFileSync(user, JSON.stringify({ webHost: '0.0.0.0', webPort: 9100 }));
+  const appDirCfg = path.join(dir, 'app');
+  fs.mkdirSync(appDirCfg);
+  fs.writeFileSync(path.join(appDirCfg, 'config.json'), JSON.stringify({ webPort: 9200 }));
+  const other = path.join(dir, 'other.json');
+  fs.writeFileSync(other, JSON.stringify({ ttlMinutes: 5 }));
+  try {
+    const c = loadConfig({ argv: [], env: { HOME: home }, platform: 'linux', dir: appDirCfg });
+    assert.equal(c.webHost, '0.0.0.0', 'from ~/.config');
+    assert.equal(c.webPort, 9200, 'file next to the program wins over ~/.config');
+    assert.deepEqual(c.configFilesUsed, [user, path.join(appDirCfg, 'config.json')]);
+
+    const only = loadConfig({ argv: ['--config', other, '--port', '9300'], env: { HOME: home }, platform: 'linux', dir: appDirCfg });
+    assert.equal(only.ttlMinutes, 5);
+    assert.equal(only.webHost, '127.0.0.1', 'search skipped with --config');
+    assert.equal(only.webPort, 9300, 'other CLI flags still apply');
+    assert.equal(loadConfig({ argv: [`--config=${other}`], env: {}, platform: 'linux', dir: appDirCfg }).ttlMinutes, 5);
+    assert.throws(() => loadConfig({ argv: ['--config', path.join(dir, 'missing.json')], env: {} }), /not found/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('broken config.json gives a clear error', () => {
   const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-'));
   const file = path.join(dir, 'config.json');

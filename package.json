@@ -7,12 +7,18 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test \"test/*.test.js\"",
-    "package": "pkg . --targets node22-win-x64 --output dist/js8call-map.exe"
+    "test:browser": "node --test \"test/browser/*.test.js\"",
+    "replay": "node scripts/replay.js",
+    "package": "npm run package:win",
+    "package:win": "pkg . --targets node22-win-x64 --output dist/js8call-map.exe",
+    "package:linux-x64": "pkg . --targets node22-linux-x64 --output dist/linux-x64/js8call-map",
+    "package:linux-arm64": "pkg . --targets node22-linux-arm64 --output dist/linux-arm64/js8call-map",
+    "deb": "node scripts/build-deb.js"
   },
   "pkg": {
     "assets": [
       "public/index.html",
-      "public/app.js",
+      "public/js/*.js",
       "public/grid.js",
       "public/style.css",
       "public/data/interstates.geojson",
@@ -38,6 +44,6 @@
     "world-atlas": "^2.0.2"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

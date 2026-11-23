@@ -91,6 +91,28 @@ test('replay uses recorded times, so expiry and dedupe behave as they did live',
 
 // ── recorded sessions ─────────────────────────────────────────────────────────
 
+// Known results for a real 35-minute 40 m session (operator call/grid replaced
+// with N0CALL / FN31PR). A parser change that alters these needs a reason.
+test('real session 2026-11-23: known station, message and "hears you" counts', (t) => {
+  const file = path.join(FIXTURES, '2026-11-23-40m-session.jsonl');
+  if (!fs.existsSync(file)) return t.skip('fixture not present');
+  const { entries, errors } = parseRecording(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(errors, []);
+  const result = replay(entries);
+  const sum = summarize(result, entries);
+  assert.deepEqual(sum.myStation, { callsign: 'N0CALL', grid: 'FN31PR' });
+  assert.equal(sum.stations, 26);
+  assert.equal(sum.withGrid, 6);
+  assert.equal(sum.messages, 138);
+  assert.equal(sum.heardMe.length, 8);
+
+  // 66 band-activity polls repeat the same lines thousands of times; each
+  // message must reach the browser exactly once.
+  const sent = result.sent.filter(p => p.type === 'NEW_MESSAGE');
+  assert.equal(sent.length, 138);
+  assert.equal(new Set(sent.map(p => `${p.callsign}|${p.message.utc}|${p.message.text}`)).size, 138);
+});
+
 const fixtures = fs.existsSync(FIXTURES) ? fs.readdirSync(FIXTURES).filter(f => f.endsWith('.jsonl')) : [];
 
 test('at least one recorded session fixture is present', () => {

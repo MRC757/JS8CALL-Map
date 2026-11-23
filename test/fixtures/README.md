@@ -28,6 +28,13 @@ public radio traffic) plus your own callsign and grid.
 
 ## Files
 
+- `2026-11-23-40m-session.jsonl` — **real** 35-minute session on 40 m
+  (7.078 MHz), 399 messages from JS8CALL. The operator's own callsign and grid
+  were replaced with `N0CALL` / `FN31PR`; everything else is exactly as
+  received. `test/recording.test.js` pins its results (26 stations, 138
+  messages, 8 stations hearing you). This recording revealed that activity
+  replies carry their entries directly in `params`, and that `RX.ACTIVITY`
+  has no `FROM` field.
 - `synthetic-example.jsonl` — **made up**, not a real recording. It mimics the
   message shapes JS8CALL sends, so the replay tests have something to run until
   real sessions are added. Real recordings are more valuable: if one fails, the

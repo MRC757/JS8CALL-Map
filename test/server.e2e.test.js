@@ -34,7 +34,9 @@ function fakeJS8(port) {
   const t0 = Date.now();
   const listeners = new Set();
   const queries   = [];
+  const sent      = [];   // every command received, in full
   const replies = {
+    'RIG.GET_FREQ':         id => ({ type: 'RIG.FREQ', value: '', params: { _ID: id, DIAL: 7078000, FREQ: 7079500, OFFSET: 1500 } }),
     'STATION.GET_CALLSIGN': id => ({ type: 'STATION.CALLSIGN', value: 'W1AW', params: { _ID: id } }),
     'STATION.GET_GRID':     id => ({ type: 'STATION.GRID', value: 'FN31PR', params: { _ID: id } }),
     'RX.GET_CALL_ACTIVITY': id => ({ type: 'RX.CALL_ACTIVITY', value: '', params: { _ID: id,
@@ -56,6 +58,7 @@ function fakeJS8(port) {
       for (const line of buf.split('\n').slice(0, -1)) {
         const q = JSON.parse(line);
         queries.push(q.type);
+        sent.push(q);
         const make = replies[q.type];
         if (make) setTimeout(() => sock.write(JSON.stringify(make(q.params._ID)) + '\n'), 5);
       }
@@ -64,7 +67,7 @@ function fakeJS8(port) {
   });
 
   return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve({
-    server, queries,
+    server, queries, sent,
     emit: obj => { for (const s of listeners) s.write(JSON.stringify(obj) + '\n'); },
     close: () => new Promise(r => { for (const s of listeners) s.destroy(); server.close(r); }),
   })));
@@ -113,7 +116,7 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
   const proc = spawn(process.execPath,
     ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8Port), '--poll-seconds', '1',
      '--record', recordFile],
-    { cwd: ROOT, env: { ...process.env, JS8MAP_HOST: '' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    { cwd: ROOT, env: { ...process.env, JS8MAP_HOST: '', JS8MAP_DATA_DIR: recordDir }, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   proc.stdout.on('data', d => { log += d; });
   proc.stderr.on('data', d => { log += d; });
@@ -133,7 +136,7 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
   await t.test('serves every asset with the right content type', async () => {
     const { ASSETS } = require('../lib/assets');
     const expected = { '.html': 'text/html', '.js': 'javascript', '.css': 'text/css', '.json': 'json',
-                       '.geojson': 'json', '.png': 'image/png' };
+                       '.geojson': 'json', '.png': 'image/png', '.woff2': 'font/woff2' };
     for (const [route, rel] of Object.entries(ASSETS)) {
       const r = await fetch(base + route);
       assert.equal(r.status, 200, route);
@@ -226,6 +229,90 @@ test('server end-to-end against a fake JS8CALL', async (t) => {
     c.ws.close();
   });
 
+  await t.test('JS8Stat: heard reports, acks and the live feed', async () => {
+    const { c, snap } = await snapshot();
+    assert.equal(snap.js8stat.mayTransmit, true, 'loopback browsers may transmit by default');
+    assert.equal(snap.js8stat.transmitMode, 'local');
+    assert.equal(snap.js8stat.keepDays, 7);
+    assert.deepEqual(snap.js8stat.records, []);
+
+    const at = Date.now() - 2000;
+    const text = '@AMRRON ,EM73TU,2,M05,111311111111,BRIDGE OUT,{&%} ♢';
+    js8.emit({ type: 'RX.DIRECTED', value: text,
+      params: { FROM: 'KN4CRD', TO: '@AMRRON', TEXT: text, UTC: at, DIAL: 7078000, OFFSET: 1500, SNR: -11 } });
+    const rec = (await c.until(m => m.type === 'CS_RECORD' && m.record.from === 'KN4CRD')).record;
+    assert.deepEqual([rec.kind, rec.target, rec.grid, rec.scope, rec.srId, rec.status, rec.remarks, rec.snr, rec.freq, rec.source],
+      ['statrep', '@AMRRON', 'EM73TU', '2', 'M05', '111311111111', 'BRIDGE OUT', -11, 7078000, 'rf']);
+    const feed = await c.until(m => m.type === 'CS_FEED' && m.line.from === 'KN4CRD' && /M05/.test(m.line.text));
+    assert.equal(feed.line.snr, -11);
+
+    js8.emit({ type: 'RX.ACTIVITY', value: 'VE3XYZ: @AMRRON RRSR KN4CRD,M05',
+      params: { UTC: at + 500, SNR: -3, DIAL: 7078000, OFFSET: 900 } });
+    const upd = await c.until(m => m.type === 'CS_UPDATE' && m.record.id === rec.id);
+    assert.deepEqual(upd.record.acks, ['VE3XYZ']);
+    c.ws.close();
+  });
+
+  await t.test('JS8Stat: preview, transmit and save through JS8CALL', async () => {
+    const { c } = await snapshot();
+    let nextReq = 1;
+    const req = (payload) => {
+      const reqId = nextReq++;
+      c.ws.send(JSON.stringify({ ...payload, reqId }));
+      return c.until(m => m.type === 'CS_RESULT' && m.reqId === reqId);
+    };
+    const data = { target: '@AMRRON', text: 'Net at 2100', msgId: 'B10' };
+
+    const preview = await req({ type: 'CS_SUBMIT', action: 'preview', form: 'message', data });
+    assert.equal(preview.ok, true);
+    assert.equal(preview.text, '@AMRRON MSG ,B10,NET AT 2100,{^%}');
+    assert.ok(!js8.sent.some(q => q.type === 'TX.SEND_MESSAGE'), 'a preview sends nothing');
+
+    const bad = await req({ type: 'CS_SUBMIT', action: 'send', form: 'statrep', data: { target: '@AMRRON' } });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /grid/i);
+
+    const sentRes = await req({ type: 'CS_SUBMIT', action: 'send', form: 'message', data });
+    assert.equal(sentRes.ok, true, sentRes.error);
+    for (let i = 0; i < 50 && !js8.sent.some(q => q.type === 'TX.SEND_MESSAGE'); i++) await new Promise(r => setTimeout(r, 50));
+    const tx = js8.sent.find(q => q.type === 'TX.SEND_MESSAGE');
+    assert.equal(tx.value, '@AMRRON MSG ,B10,NET AT 2100,{^%}');
+    assert.equal(sentRes.record.source, 'sent');
+    assert.equal(sentRes.record.freq, 7078000);
+    await c.until(m => m.type === 'CS_RECORD' && m.record.msgId === 'B10');
+    assert.equal(sentRes.record.wire, '@AMRRON MSG ,B10,NET AT 2100,{^%}');
+
+    // Resend: the preview gives the exact text and airtime, and sends nothing
+    const again = await req({ type: 'CS_RESEND', id: sentRes.record.id, preview: true });
+    assert.equal(again.ok, true, again.error);
+    assert.equal(again.text, sentRes.record.wire);
+    assert.ok(again.airtime.frames >= 2);
+    assert.equal(js8.sent.filter(q => q.type === 'TX.SEND_MESSAGE').length, 1);
+
+    // Relay suggestions: K9RLY hears us, N0FAR hears K9RLY
+    js8.emit({ type: 'RX.DIRECTED', value: 'W1AW SNR -08', params: { FROM: 'K9RLY', TO: 'W1AW', TEXT: 'W1AW SNR -08', UTC: Date.now() - 500, SNR: -6 } });
+    js8.emit({ type: 'RX.DIRECTED', value: 'K9RLY SNR -11', params: { FROM: 'N0FAR', TO: 'K9RLY', TEXT: 'K9RLY SNR -11', UTC: Date.now() - 500, SNR: -14 } });
+    await c.until(m => m.type === 'STATION_UPDATE' && m.station.callsign === 'N0FAR');
+    const routes = await req({ type: 'CS_ROUTES', target: 'N0FAR' });
+    assert.equal(routes.routes.relays[0].call, 'K9RLY');
+
+    const saved = await req({ type: 'CS_SUBMIT', action: 'save', form: 'alert',
+      data: { target: '@AMRRON', color: '2', title: 'Test', message: 'Saved only', alertId: 'B11' } });
+    assert.equal(saved.record.source, 'saved');
+    assert.equal(js8.sent.filter(q => q.type === 'TX.SEND_MESSAGE').length, 1, 'save does not transmit');
+
+    // Saved to disk, so a restart keeps them
+    const file = path.join(recordDir, 'js8stat.jsonl');
+    const ops = fs.readFileSync(file, 'utf8').trim().split(/\r?\n/).map(l => JSON.parse(l));
+    assert.ok(ops.some(o => o.op === 'add' && o.rec.msgId === 'B10'));
+    assert.ok(ops.some(o => o.op === 'ack' && o.call === 'VE3XYZ'));
+
+    const del = await req({ type: 'CS_DELETE', id: saved.record.id });
+    assert.equal(del.ok, true);
+    await c.until(m => m.type === 'CS_REMOVE' && m.id === saved.record.id);
+    c.ws.close();
+  });
+
   await t.test('--record captured events and query replies that replay cleanly', async () => {
     const { parseRecording, replay } = require('../lib/replay');
     await new Promise(r => setTimeout(r, 300));   // let the write stream flush
@@ -250,7 +337,7 @@ test('port already in use: one clear error, and no recording file left behind', 
   const dir  = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-busy-'));
   const rec  = path.join(dir, 'never.jsonl');
   try {
-    const proc = spawn(process.execPath, ['server.js', '--no-open', '--port', String(port), '--record', rec], { cwd: ROOT });
+    const proc = spawn(process.execPath, ['server.js', '--no-open', '--port', String(port), '--record', rec, '--data-dir', dir], { cwd: ROOT });
     let out = '';
     proc.stdout.on('data', d => { out += d; });
     proc.stderr.on('data', d => { out += d; });
@@ -263,6 +350,41 @@ test('port already in use: one clear error, and no recording file left behind', 
     blocker.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('with --transmit off nothing can be sent or saved', async (t) => {
+  const js8Port = await freePort();
+  const webPort = await freePort();
+  const js8     = await fakeJS8(js8Port);
+  const dir     = fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-off-'));
+  const proc = spawn(process.execPath,
+    ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8Port), '--transmit', 'off', '--data-dir', dir],
+    { cwd: ROOT, stdio: 'ignore' });
+  t.after(async () => {
+    proc.kill();
+    await js8.close();
+    await new Promise(r => setTimeout(r, 300));
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* temp dir */ }
+  });
+  let c;
+  for (let i = 0; !c; i++) {
+    try { c = await openWS(`ws://127.0.0.1:${webPort}`); }
+    catch (err) { if (i > 100) throw err; await new Promise(r => setTimeout(r, 100)); }
+  }
+  const snap = await c.until(m => m.type === 'SNAPSHOT');
+  assert.equal(snap.js8stat.mayTransmit, false);
+  assert.equal(snap.js8stat.transmitMode, 'off');
+  for (const action of ['send', 'save']) {
+    c.ws.send(JSON.stringify({ type: 'CS_SUBMIT', reqId: action, action, form: 'message', data: { target: '@AMRRON', text: 'hi' } }));
+    const res = await c.until(m => m.type === 'CS_RESULT' && m.reqId === action);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /switched off/);
+  }
+  c.ws.send(JSON.stringify({ type: 'CS_RESEND', reqId: 'resend', id: 1 }));
+  const resend = await c.until(m => m.type === 'CS_RESULT' && m.reqId === 'resend');
+  assert.equal(resend.ok, false);
+  assert.ok(!js8.sent.some(q => q.type === 'TX.SEND_MESSAGE'));
+  c.ws.close();
 });
 
 test('server reports a clear error for a bad option', async () => {

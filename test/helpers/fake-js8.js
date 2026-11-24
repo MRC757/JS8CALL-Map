@@ -25,6 +25,7 @@ function startFakeJS8({ port = 0, replies = {}, noiseOnConnect = false } = {}) {
   const listeners = new Set();
   const sockets   = new Set();
   const queries   = [];
+  const sent      = [];   // every command received, in full
 
   const server = net.createServer(sock => {
     sockets.add(sock);
@@ -44,6 +45,7 @@ function startFakeJS8({ port = 0, replies = {}, noiseOnConnect = false } = {}) {
       for (const line of lines.filter(Boolean)) {
         const q = JSON.parse(line);
         queries.push(q.type);
+        sent.push(q);
         const make = replies[q.type];
         if (make) setTimeout(() => sock.write(JSON.stringify(make(q.params._ID)) + '\n'), 5);
       }
@@ -53,6 +55,7 @@ function startFakeJS8({ port = 0, replies = {}, noiseOnConnect = false } = {}) {
   return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve({
     port: server.address().port,
     queries,
+    sent,
     emit: obj => { for (const s of listeners) s.write(JSON.stringify(obj) + '\n'); },
     close: () => new Promise(r => { for (const s of sockets) s.destroy(); server.close(() => r()); }),
   })));

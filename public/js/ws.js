@@ -7,11 +7,17 @@ import { patchSidebarItem, rebuildSidebar, scheduleSidebarRebuild, markUnread } 
 import { renderDetailPanel, updateDetailStats, insertDetailMessage, hideDetailPanel } from './detail.js';
 import { scheduleHeardPaths } from './heard-paths.js';
 import { redrawGrid } from './grid-overlay.js';
+import { cs, csSnapshot, csHandle, csSetConnected, setSender, emit as csEmit } from './js8stat.js';
 
 const { gridToLatLon } = globalThis.Grid;
 
 export function connectWS() {
-  const ws = new WebSocket(`ws://${location.host}`);
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
+  setSender(obj => {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(obj));
+    return true;
+  });
   ws.onopen    = () => console.log('[WS] connected');
   ws.onmessage = ({ data }) => {
     let msg;
@@ -50,6 +56,8 @@ export function handleServerMsg(msg) {
       updateConnectionBadge(msg.connected);
       rebuildSidebar();
       scheduleHeardPaths();
+      if (msg.js8stat) csSnapshot(msg.js8stat);
+      csSetConnected(msg.connected);
       break;
     }
 
@@ -58,6 +66,7 @@ export function handleServerMsg(msg) {
       updateMyStationUI();
       refreshAllMarkers();
       scheduleHeardPaths();
+      csEmit('connection', cs.connected);   // transmit readiness depends on knowing our callsign
       break;
 
     // A station's metadata changed (no messages in this payload)
@@ -101,7 +110,11 @@ export function handleServerMsg(msg) {
 
     case 'CONNECTION_STATUS':
       updateConnectionBadge(msg.connected);
+      csSetConnected(msg.connected);
       break;
+
+    default:
+      csHandle(msg);   // JS8Stat records, live feed and request results
   }
 }
 

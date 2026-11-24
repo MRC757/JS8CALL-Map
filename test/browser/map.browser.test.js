@@ -7,6 +7,8 @@
 
 const test      = require('node:test');
 const assert    = require('node:assert/strict');
+const fs        = require('fs');
+const os        = require('os');
 const path      = require('path');
 const { spawn } = require('child_process');
 
@@ -45,7 +47,8 @@ test('map UI in a real browser', {
 
   const webPort = await freePort();
   const server  = spawn(process.execPath,
-    ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8.port), '--poll-seconds', '2'],
+    ['server.js', '--no-open', '--port', String(webPort), '--js8-port', String(js8.port), '--poll-seconds', '2',
+     '--data-dir', fs.mkdtempSync(path.join(os.tmpdir(), 'js8map-data-'))],
     { cwd: ROOT, stdio: 'ignore' });
   t.after(() => { server.kill(); });
 
@@ -70,6 +73,9 @@ test('map UI in a real browser', {
   });
 
   await t.test('stations sharing a grid square fan out and are each clickable', async () => {
+    // The map zooms in on the home grid at start-up; pins move until that animation ends.
+    await page.waitFor(`!js8map.map._animatingZoom`);
+    await sleep(300);
     const pts = await ev(`[...document.querySelectorAll('.station-marker')].map(e => { const r = e.getBoundingClientRect();
       return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), cs: e.title, home: e.classList.contains('my-station') }; })`);
     const em73 = pts.filter(p => ['W1AW', 'KN4CRD', 'K4ABC', 'N4XYZ'].includes(p.cs));

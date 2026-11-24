@@ -10,6 +10,14 @@ connects to the TCP API of a running JS8CALL and shows the stations it hears
 on an offline map in your web browser: signal reports, message history, who is
 hearing you, day/night and greyline overlays, and distance and bearing tools.
 .PP
+The JS8Stat view decodes status reports (StatReps), incidents, group
+alerts and group messages heard by JS8CALL in the formats used by
+CommStat-compatible stations, shows them in tables and on the map,
+and keeps them for a number of days. Optionally it can transmit these through
+JS8CALL; the operator switches transmitting on in the map and confirms every
+transmission. JS8Stat is part of js8call-map; it is not CommStat, not a new
+version of CommStat, and not affiliated with the CommStat project.
+.PP
 In JS8CALL, enable the TCP server (File > Settings > Reporting, port 2237) and
 set Max TCP Connections to 3.
 .PP
@@ -45,6 +53,23 @@ Messages kept per station (default 100).
 Open, or don't open, the map in your web browser at startup. On by default for
 the installed program when a desktop is available.
 .TP
+.BI \-\-transmit " mode"
+Who may send JS8Stat reports, alerts and messages through JS8CALL:
+.B off
+(never),
+.B local
+(default; only a browser on the same computer) or
+.B lan
+(any device that can open the map). Transmitting must also be switched on in
+the map, and every transmission is confirmed by the operator.
+.TP
+.BI \-\-data\-dir " folder"
+Where JS8Stat records are saved (default
+.IR ~/.local/share/js8call\-map ).
+.TP
+.BI \-\-keep\-days " n"
+Keep JS8Stat records for this many days (default 7).
+.TP
 .BI \-\-config " file"
 Read settings from this file instead of the usual locations.
 .TP
@@ -68,6 +93,9 @@ Per-user settings; these override the system-wide file. For example:
 .EE
 .RE
 .TP
+.I ~/.local/share/js8call\-map/js8stat.jsonl
+Saved JS8Stat records (status reports, incidents, alerts and messages).
+.TP
 .I /usr/lib/systemd/user/js8call\-map.service
 systemd user service for running the map without a desktop.
 .SH ENVIRONMENT
@@ -80,7 +108,10 @@ Each option can also be set with an environment variable:
 .BR JS8MAP_TTL_MINUTES ,
 .BR JS8MAP_MAX_MESSAGES ,
 .BR JS8MAP_OPEN ,
-.BR JS8MAP_RECORD .
+.BR JS8MAP_RECORD ,
+.BR JS8MAP_TRANSMIT ,
+.BR JS8MAP_DATA_DIR ,
+.BR JS8MAP_KEEP_DAYS .
 Command-line options override environment variables, which override the
 configuration files.
 .SH EXAMPLES

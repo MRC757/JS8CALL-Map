@@ -13,6 +13,7 @@
   -->
   <link rel="stylesheet" href="/leaflet/leaflet.css" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="js8stat.css" />
 </head>
 <body>
 
@@ -30,6 +31,9 @@
     </select>
 
     <div id="controls">
+      <button id="btn-js8stat"      class="btn"
+              title="JS8Stat: status reports, messages, alerts, live feed and transmit forms. Part of JS8CALL Map; not CommStat, but compatible with its message formats"
+              aria-pressed="false">JS8Stat</button>
       <button id="btn-grid"          class="btn active" title="Toggle Maidenhead Grid Overlay"
               aria-pressed="true">Grid</button>
       <button id="btn-night"         class="btn"
@@ -59,6 +63,61 @@
       &#9679; Disconnected
     </div>
   </div>
+
+  <!-- ── JS8Stat menu bar (shown with the JS8Stat view) ─────────────────── -->
+  <nav id="cs-menubar" class="cs" aria-label="JS8Stat" hidden>
+    <div class="cs-menu">
+      <button type="button" class="cs-menu-btn" aria-haspopup="true" aria-expanded="false">Transmit</button>
+      <div class="cs-menu-list" role="menu">
+        <div class="cs-menu-head">Transmitting</div>
+        <div role="menuitemcheckbox" tabindex="-1" data-setting="txEnabled">Enable transmitting</div>
+        <div class="cs-menu-head">Send</div>
+        <div role="menuitem" tabindex="-1" data-action="statrep">Status Report&hellip;</div>
+        <div role="menuitem" tabindex="-1" data-action="message">Message&hellip;</div>
+        <div role="menuitem" tabindex="-1" data-action="alert">Alert&hellip;</div>
+        <div role="menuitem" tabindex="-1" data-action="incident">Incident&hellip;</div>
+      </div>
+    </div>
+    <div class="cs-menu">
+      <button type="button" class="cs-menu-btn" aria-haspopup="true" aria-expanded="false">Filter</button>
+      <div class="cs-menu-list" role="menu">
+        <div class="cs-menu-head">Date Filtering</div>
+        <div role="menuitemradio" tabindex="-1" data-setting="since" data-value="midnight">Since midnight (UTC)</div>
+        <div role="menuitemradio" tabindex="-1" data-setting="since" data-value="24h">Last 24 hours</div>
+        <div role="menuitemradio" tabindex="-1" data-setting="since" data-value="all">Everything kept</div>
+        <div class="cs-menu-head">Groups</div>
+        <div role="menuitem" tabindex="-1" data-action="groups" id="cs-groups-label">Groups: all</div>
+        <div class="cs-menu-head">Map Pins</div>
+        <div role="menuitemcheckbox" tabindex="-1" data-setting="showPins">Show StatRep pins</div>
+        <div role="menuitemcheckbox" tabindex="-1" data-setting="hideGreen">Hide green pins</div>
+        <div class="cs-menu-head">Live Feed</div>
+        <div role="menuitemcheckbox" tabindex="-1" data-setting="hideHB">Hide CQ &amp; heartbeat</div>
+      </div>
+    </div>
+    <div class="cs-menu">
+      <button type="button" class="cs-menu-btn" aria-haspopup="true" aria-expanded="false">View</button>
+      <div class="cs-menu-list" role="menu">
+        <div role="menuitem" tabindex="-1" data-action="alerts">Alerts&hellip;</div>
+        <div role="menuitem" tabindex="-1" data-action="roster">Group Roster&hellip;</div>
+        <div role="menuitemcheckbox" tabindex="-1" data-setting="sounds">Sound notifications</div>
+        <div role="menuitem" tabindex="-1" data-action="about">About JS8Stat&hellip;</div>
+      </div>
+    </div>
+    <span class="cs-spacer"></span>
+    <span id="cs-clock-state" class="cs-clock-unknown" role="status">CLOCK ?</span>
+    <span id="cs-tx-state" class="cs-tx-off" role="status">TX OFF</span>
+    <span class="cs-time-label">Time:</span>
+    <span id="cs-clock" aria-label="UTC time">--:--:--</span>
+  </nav>
+
+  <!-- ── JS8Stat status reports ───────────────────────────────────────────── -->
+  <section id="cs-statrep-panel" class="cs cs-table-wrap" aria-label="Status reports" hidden>
+    <table id="cs-statrep-table" class="cs-table"><thead></thead><tbody></tbody></table>
+  </section>
+  <div id="cs-split-top" class="cs-splitter cs-splitter-h" role="separator" aria-orientation="horizontal"
+       aria-label="Resize status reports" tabindex="0" hidden></div>
+
+  <div id="main-row">
 
   <!-- ── Content Area ────────────────────────────────────────────────────── -->
   <div id="content-area">
@@ -94,6 +153,26 @@
     <!-- Distance measurement result banner -->
     <div id="measure-result" class="hidden" role="status" aria-live="polite"></div>
 
+    <!-- JS8Stat group alert -->
+    <div id="cs-alert" class="cs hidden" role="alert" aria-live="assertive"></div>
+
+  </div>
+
+  <div id="cs-split-side" class="cs-splitter cs-splitter-v" role="separator" aria-orientation="vertical"
+       aria-label="Resize messages and live feed" tabindex="0" hidden></div>
+
+  <!-- JS8Stat messages and live feed -->
+  <aside id="cs-side" class="cs" aria-label="Messages and live feed" hidden>
+    <section id="cs-messages-panel" class="cs-table-wrap" aria-label="Messages">
+      <table id="cs-message-table" class="cs-table"><thead></thead><tbody></tbody></table>
+    </section>
+    <div id="cs-split-feed" class="cs-splitter cs-splitter-h" role="separator" aria-orientation="horizontal"
+         aria-label="Resize live feed" tabindex="0"></div>
+    <section id="cs-feed-panel" aria-label="Live feed">
+      <div class="cs-title-bar">Live Feed</div>
+      <div id="cs-feed" tabindex="0"></div>
+    </section>
+  </aside>
   </div>
 
   <script src="/leaflet/leaflet.js"></script>

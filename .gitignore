@@ -27,3 +27,6 @@ desktop.ini
 
 # ── Local configuration ───────────────────────────────────────────────────────
 config.json
+
+# ── Reference copy of CommStat (GPL-3.0); not part of this project ──────────
+commstat-5.9.1/

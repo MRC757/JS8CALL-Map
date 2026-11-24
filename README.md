@@ -3,6 +3,11 @@
 Runs on **Windows**, **Linux PCs** and **Raspberry Pi**, on a desktop or headless.
 
 An interactive browser-based map that displays the real-time locations of ham radio operators heard by your local [JS8CALL](http://js8call.com/) station. Stations are plotted on a Maidenhead grid map with signal strength, frequency data, message history, and distance/bearing tools.
+
+**JS8Stat** adds group status reporting over JS8CALL with no internet needed: status reports, incidents, alerts and group messages, acknowledgements and resends, relay suggestions, a group roster, and an optional transmit side. It reads and sends the same message formats as CommStat stations. It is not CommStat (see [JS8Stat View](#js8stat-view)).
+
+![JS8Stat view: status reports with acknowledgements, map pins, messages and live feed](docs/js8stat.png)
+
 ![Light](https://github.com/user-attachments/assets/7c6e1e9f-239b-4f4f-bd51-27bef5bcf27c)
 ![Slate](https://github.com/user-attachments/assets/960c92b4-2686-47f2-97e5-3d8729c45378)
 ![Grid](https://github.com/user-attachments/assets/c46d8a2f-1dca-4d7b-9b15-3594879c7939)
@@ -38,6 +43,8 @@ An interactive browser-based map that displays the real-time locations of ham ra
 - **Windows, Linux and Raspberry Pi** — a Windows `.exe`, and `.deb` packages for Debian/Ubuntu PCs and 64-bit Raspberry Pi OS, with a menu entry for desktops and a systemd service for headless use
 - **Private by default** — only reachable from the same PC unless you opt in to LAN access; other websites can't read the live feed through your browser
 - **Auto-reconnect** — reconnects to JS8CALL automatically if it restarts; 15-second connect timeout prevents hangs
+- **JS8Stat view** — decodes status reports (StatReps), incidents, group alerts and group messages heard by JS8CALL, in the formats CommStat-compatible stations use, and shows them: a StatRep table with traffic-light condition cells, status pins on the map, a messages table, pop-up alerts and a live feed. Records are kept for 7 days (configurable) across restarts
+- **JS8Stat transmit (optional)** — send StatReps, alerts, group messages, incidents and acknowledgements through JS8CALL, with acknowledgement tracking and resend, airtime estimates, relay suggestions, a group roster, and clock and group-membership checks. Off until the operator switches it on, and every transmission shows the exact text and asks for confirmation first
 - **Session recording** — `--record` saves JS8CALL's raw traffic so real sessions can be replayed as tests
 - **Graceful shutdown** — `Ctrl+C` closes all connections cleanly
 - **Accessible** — keyboard-navigable sidebar, ARIA labels, respects OS reduced-motion preference
@@ -74,6 +81,15 @@ Before starting the map, configure the JS8CALL TCP API server:
 4. Leave the port at the default **2237**
 5. Set **"Max TCP Connections"** to **3** (the default of 1 is not enough — the map uses one persistent connection for real-time events and additional short-lived connections to query station and activity data)
 6. Click **OK**
+
+For JS8Stat, also add every group you follow (for example `@AMRRON`) to your group
+memberships in JS8CALL's settings. JS8CALL only passes on whole messages for groups you
+belong to; for other groups only fragments arrive, so most JS8Stat traffic for them is
+missed. JS8Stat warns you when it sees this happening (see **Group Roster** below).
+
+Keep the PC clock accurate. JS8CALL needs the time to within about a second or two, and
+without internet there is no time server — use a GPS time source in the field. JS8Stat's
+**CLOCK** indicator warns you when decodes start arriving off-time.
 
 ---
 
@@ -203,6 +219,9 @@ Defaults work for a typical single-PC setup. To change them, use any of the foll
 | Messages per station | `maxMessages` | `JS8MAP_MAX_MESSAGES` | `--max-messages` | `100` |
 | Open browser at startup | `openBrowser` | `JS8MAP_OPEN` | `--open` / `--no-open` | on for the installed app (when a desktop is available), off from source |
 | Record raw JS8CALL traffic | `record` | `JS8MAP_RECORD` | `--record <file>` | off |
+| Who may transmit JS8Stat traffic | `transmit` | `JS8MAP_TRANSMIT` | `--transmit off\|local\|lan` | `local` (a browser on this PC only) |
+| Where JS8Stat records are saved | `dataDir` | `JS8MAP_DATA_DIR` | `--data-dir <folder>` | `%LOCALAPPDATA%\js8call-map` (Windows), `~/.local/share/js8call-map` (Linux) |
+| Keep JS8Stat records (days) | `keepDays` | `JS8MAP_KEEP_DAYS` | `--keep-days` | `7` |
 
 Example `config.json`:
 
@@ -275,10 +294,10 @@ Pushing a version tag builds the Windows exe and both Linux packages on GitHub a
 ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
 
 ```bash
-npm version 1.3.0 --no-git-tag-version
-git commit -am "Release v1.3.0"
-git tag v1.3.0
-git push origin main v1.3.0
+npm version 2.0.0 --no-git-tag-version
+git commit -am "Release v2.0.0"
+git tag v2.0.0
+git push origin main v2.0.0
 ```
 
 The workflow checks the tag matches `package.json`, runs the tests on each platform,
@@ -300,6 +319,97 @@ double-click `js8call-map.exe`; Linux and Raspberry Pi users install the matchin
 ---
 
 ## Usage
+
+### JS8Stat View
+
+![The JS8Stat view](docs/js8stat.png)
+
+> **JS8Stat is not CommStat.** It is part of JS8CALL Map — not a new version of
+> CommStat, not based on CommStat's code, and not affiliated with the CommStat project
+> or its authors. It reads and sends the same plain-text message formats, so JS8Stat
+> and CommStat stations can exchange status reports, alerts and messages on the air.
+
+Click **JS8Stat** in the toolbar to add the JS8Stat panels around the map (click
+again to hide them). The rest of the map keeps its theme; the panels have their own
+fixed colours so condition reports read the same in every theme. Drag the dark-red
+dividers to resize the panels.
+
+- **Status reports** (top) — one row per StatRep or incident heard, newest first. The
+  left cell shows signal strength (green ≥ −5 dB, yellow ≥ −16 dB, red below), blue
+  for reports you sent, grey for ones only saved. The twelve condition cells are
+  green, yellow, red or grey (unknown); incidents are purple (Event) or magenta
+  (Attack). Click a row for the full report, the **ID** to find its pin, or the
+  callsign to open the station.
+- **Map pins** — each station's latest report as a dot coloured by its Map Pin
+  condition, with a halo sized by scope (My QTH → Region). Incidents are rings.
+  A station heard without a grid square takes the grid from its own report.
+- **Messages** (right) — group messages and messages addressed to you.
+  **FILTER** opens a filter box per column. Requests for information are pink.
+- **Live feed** (bottom right) — every decode, laid out like JS8CALL's `DIRECTED.TXT`.
+- **Alerts** — a new group alert pops up over the map in its alert colour;
+  **View → Alerts** shows them again.
+- **Filter menu** — since midnight (UTC) / last 24 hours / everything kept, which
+  groups to show (traffic addressed to you always shows), map pin options, and
+  hiding CQ and heartbeat lines in the live feed.
+
+Records are kept for 7 days (`keepDays`) and survive restarts. **Delete** in a
+record's window removes it from the map only.
+
+#### Transmitting
+
+Transmitting is off until you turn it on with **Transmit → Enable transmitting**; the
+bar then shows **TX READY**. The Transmit menu has forms for a **Status Report**
+(the Map Pin follows the worst condition unless you set it; **All Green** fills every
+condition), **Message**, **Alert** and **Incident**. A received report's window has
+**Acknowledge**, which sends an RRSR acknowledgement.
+
+Every form has **Save Only** (keep it on the map without sending) and **Transmit**.
+Transmit always shows the exact text JS8CALL will send and sends nothing until you
+press **Transmit** again in that confirmation. Messages go out on JS8CALL's current
+frequency; the optional **Speed** changes JS8CALL's speed mode first.
+
+**Drafts.** Anything saved with **Save Only** has a grey marker. Open it (click its
+row, or use the alert panel) and press **Edit / Send** to reopen it in its form with
+every field filled in and its original ID kept. Change it, save it again, or transmit
+it; either way the draft is replaced, so you never end up with a duplicate. On a
+status report the Map Pin keeps following the worst condition unless you had set it
+yourself.
+
+#### Getting traffic through
+
+- **Acknowledgements.** The **Ack** column shows, for what you sent, whether it was
+  acknowledged: **✓2** (acknowledged by two stations), **…** (waiting) or a red **!**
+  when nothing came back within 15 minutes; JS8Stat also pops up a reminder then.
+  Status reports and incidents are acknowledged with RRSR replies; messages to a
+  callsign by JS8CALL's automatic **ACK**. Group messages and alerts are not
+  acknowledged on the air, so their window lists the stations that reported hearing
+  you in the last 30 minutes instead.
+- **Resend.** A record you transmitted has **Resend**, which sends exactly the same
+  text and ID again (after the usual confirmation). Stations that already have it
+  ignore the repeat; the window shows how many times it was resent.
+- **Airtime.** Every form, and every confirmation, shows roughly how many frames the
+  message needs and how long that takes at the chosen speed (or JS8CALL's current
+  speed). Messages over two minutes are flagged: shorter messages get through more
+  often when the band is poor. The estimate is about 9 characters per frame plus one
+  header frame, measured on the air; plain words compress a little better.
+- **Relays.** When a message goes to a callsign, the **Route** picker offers **Direct**
+  or a relay through a station that hears you and is heard by the recipient, using the
+  SNR reports and heartbeat replies heard in the last 3 hours. The hint explains the
+  evidence. Relayed acknowledgements come back through the relay.
+- **Group Roster** (View menu). For each group: who sent a report, who was heard
+  without reporting, and who has gone silent in the last 6, 12 or 24 hours. If a group
+  is only ever heard in fragments, the roster (and a pop-up) tells you to add it to your
+  groups in JS8CALL.
+- **CLOCK indicator** (JS8Stat bar). Shows whether decodes arrive on time, from the
+  median timing offset of the last 15 minutes of decodes: **CLOCK OK**, amber beyond
+  1 s, red beyond 2 s.
+- **Unique IDs.** IDs are the hour and minute; if you send two records in the same
+  minute, the second automatically gets the next free ID so neither is lost.
+
+The `transmit` setting controls which browsers may transmit: `local` (default) allows
+only a browser on the PC running the map, `lan` allows any device that can open the
+map, and `off` disables transmitting (and saving) completely. As always, you are the
+control operator for anything sent.
 
 ### Map Navigation
 
@@ -423,6 +533,12 @@ Browser  (Leaflet.js + ES modules in public/js/)
 - Pushes live updates to all connected browsers via WebSocket, only when something actually changed
 - Opens the default browser once listening (packaged `.exe`, or `--open`)
 - Handles `SIGINT` / `SIGTERM` for graceful shutdown
+- For JS8Stat, sends `TX.SEND_MESSAGE` (and optionally `MODE.SET_SPEED`) on its own short-lived connection, only for a browser the `transmit` setting allows and only after the operator confirms in the page; it also asks JS8CALL for the dial frequency (`RIG.GET_FREQ`) and speed (`MODE.GET_SPEED`)
+
+**lib/js8stat/ responsibilities:**
+- `protocol.js` decodes and builds the status message formats (status reports, incidents, alerts, group messages, RRSR and JS8CALL ACKs, relays) and estimates airtime
+- `store.js` keeps the records for `keepDays` in `js8stat.jsonl` (append-only, compacted on start-up), with duplicate detection by day, station and ID
+- `index.js` keeps the live feed, matches acknowledgements, resends, suggests relays from who has reported hearing whom, tracks group activity for the roster, flags groups heard only in fragments, and checks the PC clock from decode timing
 
 **lib/station-store.js responsibilities:**
 - Validates callsigns (must contain a digit), grid locators, frequency, offset, and message text before storing
@@ -435,7 +551,9 @@ Browser  (Leaflet.js + ES modules in public/js/)
 basemap), `grid-overlay.js`, `us-overlays.js`, `daynight.js` (night and greyline),
 `markers.js`, `sidebar.js`, `detail.js`, `selection.js`, `measure.js`,
 `heard-paths.js`, `theme.js` and `ws.js` (server messages) each own one part of the
-page; `sun.js`, `geo.js` and `util.js` are pure maths/formatting and are unit-tested
+page; `js8stat.js` (JS8Stat state, dialogs and delivery helpers), `cs-dashboard.js`
+(menus, clock and layout), `cs-statreps.js`, `cs-messages.js`, `cs-alerts.js`,
+`cs-forms.js` (transmit forms, airtime, relay picker) and `cs-roster.js` make up JS8Stat; `sun.js`, `geo.js` and `util.js` are pure maths/formatting and are unit-tested
 in Node. Together they:
 - Renders a Leaflet map with a fully offline vector world basemap (TopoJSON via world-atlas)
 - Draws the Maidenhead grid overlay (polylines at low zoom, canvas at zoom ≥ 9)
@@ -457,6 +575,10 @@ JS8CALL Map/
 ├── server.js          Node.js backend — HTTP/WebSocket server, JS8CALL TCP bridge
 ├── lib/
 │   ├── station-store.js  Station/message store and JS8CALL message parsing
+│   ├── js8stat/
+│   │   ├── protocol.js   Status message formats (CommStat-compatible): decoding and encoding
+│   │   ├── store.js      JS8Stat records, saved to js8stat.jsonl for keepDays
+│   │   └── index.js      Live feed, decoding, transmit/resend, relays, roster, clock and group checks
 │   ├── config.js         config.json / environment / command-line settings
 │   ├── net-utils.js      Query-reply matching, WebSocket origin check, line splitter
 │   ├── open-browser.js   Opens the map in the default browser at startup
@@ -467,6 +589,7 @@ JS8CALL Map/
 │   ├── replay.js      npm run replay — summarise a recording
 │   └── build-deb.js   npm run deb — build the Debian package
 ├── packaging/linux/   Menu entry, icon, systemd user service, copyright and docs for the .deb
+├── docs/              Screenshots used in this README
 ├── test/              node:test suites (npm test)
 │   ├── browser/          Headless-browser tests (npm run test:browser)
 │   ├── fixtures/         Recorded JS8CALL sessions replayed by the tests

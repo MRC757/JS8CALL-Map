@@ -44,7 +44,9 @@ test('unused map data stays out of the bundle', () => {
 
 test('no code builds path.join(__dirname, "<literal>") paths (pkg would bundle whole folders)', () => {
   const root = path.join(__dirname, '..');
-  for (const f of ['server.js', ...fs.readdirSync(path.join(root, 'lib')).map(n => 'lib/' + n)]) {
+  const libFiles = fs.readdirSync(path.join(root, 'lib'), { recursive: true })
+    .map(n => 'lib/' + String(n).replace(/\\/g, '/')).filter(n => n.endsWith('.js'));
+  for (const f of ['server.js', ...libFiles]) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     assert.doesNotMatch(src, /path\.(join|resolve)\(\s*__dirname\s*,\s*['"`]/, f);
   }
